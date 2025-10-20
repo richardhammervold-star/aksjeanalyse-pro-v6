@@ -442,6 +442,18 @@ if run:
     status.empty()
     progress.empty()
 
+def style_df(df: pd.DataFrame, fmt_map: dict):
+    styler = df.style.format(fmt_map)
+    # Pandas 2.x: hide_index() finnes ikke – bruk hide(axis="index")
+    try:
+        styler = styler.hide_index()
+    except Exception:
+        try:
+            styler = styler.hide(axis="index")
+        except Exception:
+            pass
+    return styler
+
 # -----------------------------
 # Visning – tre kolonner
 # -----------------------------
@@ -454,25 +466,27 @@ if run:
         df1 = df[["Ticker","Prob_1d","Rec_1d","Date_1d","Acc"]].copy()
         df1 = df1.sort_values("Prob_1d", ascending=False)
         st.dataframe(
-            df1.style.format({"Prob_1d":"{:.2%}","Acc":"{:.2%}"}).hide_index(),
-            use_container_width=True
-        )
-    with c2:
+    style_df(df1, {"Prob_1d":"{:.2%}","Acc":"{:.2%}"}),
+    use_container_width=True
+)
+
+ with c2:
         st.subheader("🟦 3 dager frem")
         df3 = df[["Ticker","Prob_3d","Rec_3d","Date_3d","Acc"]].copy()
         df3 = df3.sort_values("Prob_3d", ascending=False)
         st.dataframe(
-            df3.style.format({"Prob_3d":"{:.2%}","Acc":"{:.2%}"}).hide_index(),
-            use_container_width=True
-        )
+    style_df(df3, {"Prob_3d":"{:.2%}","Acc":"{:.2%}"}),
+    use_container_width=True
+)
+
     with c3:
         st.subheader("🟧 5 dager frem")
         df5 = df[["Ticker","Prob_5d","Rec_5d","Date_5d","Acc","Delta_5d_1d"]].copy()
         df5 = df5.sort_values("Prob_5d", ascending=False)
         st.dataframe(
-            df5.style.format({"Prob_5d":"{:.2%}","Acc":"{:.2%}","Delta_5d_1d":"{:.2%}"}).hide_index(),
-            use_container_width=True
-        )
+    style_df(df5, {"Prob_5d":"{:.2%}","Acc":"{:.2%}","Delta_5d_1d":"{:.2%}"}),
+    use_container_width=True
+)
 
     st.markdown("---")
     st.subheader("📋 Sammenligningstabell (alle horisonter)")
@@ -556,15 +570,24 @@ if run:
         st.session_state["history_v6"] = pd.concat([hist, tmp], ignore_index=True)
         st.success("Lagt til historikk i denne økten.")
     st.dataframe(
-        st.session_state["history_v6"].tail(200).style.format({
+    style_df(
+        df[["Ticker",
+            "Prob_1d","Rec_1d","Date_1d",
+            "Prob_3d","Rec_3d","Date_3d",
+            "Prob_5d","Rec_5d","Date_5d",
+            "Delta_5d_1d","Acc","AUC","Composite"
+        ]].sort_values("Composite", ascending=False),
+        {
             "Prob_1d":"{:.2%}","Prob_3d":"{:.2%}","Prob_5d":"{:.2%}",
             "Delta_5d_1d":"{:.2%}","Acc":"{:.2%}","AUC":"{:.3f}","Composite":"{:.2%}"
-        }),
-        use_container_width=True
-    )
+        }
+    ),
+    use_container_width=True
+)
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
