@@ -457,9 +457,6 @@ def style_df(df: pd.DataFrame, fmt_map: dict):
 # -----------------------------
 # Visning – tre kolonner
 # -----------------------------
-# -----------------------------
-# Visning – tre kolonner
-# -----------------------------
 if run:
     df = pd.DataFrame(results)
 
@@ -524,7 +521,8 @@ if run:
     # -------------------------
     st.markdown("---")
     st.subheader("📊 Detaljvisning (pris + sannsynlighet 1d/3d/5d)")
-    sel = st.selectbox("Velg ticker", df["Ticker"].tolist())
+    sel_list = df["Ticker"].tolist() if not df.empty else []
+    sel = st.selectbox("Velg ticker", sel_list)
     if sel:
         try:
             raw = fetch_history(sel, start=start_date, end=end_date)
@@ -536,9 +534,10 @@ if run:
                 "Prob_5d": pack["5d"]["proba"].reindex(raw.index),
             }).dropna(subset=["Close"])
 
-            fig, ax1 = plt.subplots(figsize=(10,4))
+            fig, ax1 = plt.subplots(figsize=(10, 4))
             ax1.plot(plot_df.index, plot_df["Close"])
-            ax1.set_xlabel("Dato"); ax1.set_ylabel("Pris")
+            ax1.set_xlabel("Dato")
+            ax1.set_ylabel("Pris")
 
             ax2 = ax1.twinx()
             if "Prob_1d" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_1d"], alpha=0.9)
@@ -557,22 +556,34 @@ if run:
     # -------------------------
     st.markdown("---")
     st.subheader("📤 Eksport")
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Last ned CSV (alle horisonter)", data=csv_bytes, file_name=f"scan_v6_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", mime="text/csv")
 
+    # CSV
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "⬇️ Last ned CSV (alle horisonter)",
+        data=csv_bytes,
+        file_name=f"scan_v6_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv"
+    )
+
+    # Excel (flere ark)
     if want_excel:
         try:
             import io
-            with pd.ExcelWriter(io.BytesIO(), engine="xlsxwriter") as writer:
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                 df1.to_excel(writer, index=False, sheet_name="1d")
                 df3.to_excel(writer, index=False, sheet_name="3d")
                 df5.to_excel(writer, index=False, sheet_name="5d")
-                df.to_excel(writer, index=False, sheet_name="Comparison")
-                writer.save()
-                xls = writer.book.filename.getvalue()
-            st.download_button("⬇️ Last ned Excel (1d/3d/5d/Comparison)", data=xls,
-                               file_name=f"scan_v6_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                cmp_df.to_excel(writer, index=False, sheet_name="Comparison")
+            buf.seek(0)
+            xls = buf.getvalue()
+            st.download_button(
+                "⬇️ Last ned Excel (1d/3d/5d/Comparison)",
+                data=xls,
+                file_name=f"scan_v6_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         except Exception as e:
             st.info(f"Excel-eksport feilet: {e}")
 
@@ -585,29 +596,27 @@ if run:
         tmp["SavedAtUTC"] = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M")
         st.session_state["history_v6"] = pd.concat([hist, tmp], ignore_index=True)
         st.success("Lagt til historikk i denne økten.")
-    cmp_df = df[[
-    "Ticker",
-    "Prob_1d","Rec_1d","Date_1d",
-    "Prob_3d","Rec_3d","Date_3d",
-    "Prob_5d","Rec_5d","Date_5d",
-    "Delta_5d_1d","Acc","AUC","Composite"
-]].sort_values("Composite", ascending=False)
 
-st.dataframe(
-    style_df(cmp_df, {
-        "Prob_1d": "{:.2%}",
-        "Prob_3d": "{:.2%}",
-        "Prob_5d": "{:.2%}",
-        "Delta_5d_1d": "{:.2%}",
-        "Acc": "{:.2%}",
-        "AUC": "{:.3f}",
-        "Composite": "{:.2%}"
-    }),
-    use_container_width=True
-)
+    st.dataframe(
+        style_df(
+            st.session_state["history_v6"].tail(200),
+            {
+                "Prob_1d": "{:.2%}",
+                "Prob_3d": "{:.2%}",
+                "Prob_5d": "{:.2%}",
+                "Delta_5d_1d": "{:.2%}",
+                "Acc": "{:.2%}",
+                "AUC": "{:.3f}",
+                "Composite": "{:.2%}",
+            }
+        ),
+        use_container_width=True
+    )
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
+
 
 
 
