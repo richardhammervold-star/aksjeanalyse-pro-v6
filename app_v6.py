@@ -376,8 +376,8 @@ if run:
     progress = st.progress(0)
     status = st.empty()
 
-        for i, t in enumerate(tickers, start=1):
-        status.write(f"Henter og analyserer: {t}  ({i}/{len(tickers)})")
+    for i, t in enumerate(tickers, start=1):
+        status.write(f"Henter og analyserer: {t} ({i}/{len(tickers)})")
         try:
             df_raw = fetch_history(t, start=start_date, end=end_date)
         except Exception:
@@ -393,12 +393,11 @@ if run:
                 "Acc": np.nan, "AUC": np.nan, "Composite": np.nan
             })
             progress.progress(i / len(tickers))
-            continue
+            continue  # <-- dette er riktig innrykk
 
-        # 🚀 Viktig: denne linjen skal ha 8 mellomrom (samme som if/try/except)
+        # 👇 alt dette må være på samme nivå som "status.write" (8 mellomrom)
         pack = analyze_ticker_multi(df_raw, eps_pct=eps)
 
-        # Hent siste proba per horisont med fallback 0.5
         def last_proba(key, default=0.5):
             try:
                 s = pack[key]["proba"]
@@ -419,15 +418,19 @@ if run:
         date3 = expected_date(pack["3d"]["last_date"], 3)
         date5 = expected_date(pack["5d"]["last_date"], 5)
 
-        b1,s1 = thr["1d"]; b3,s3 = thr["3d"]; b5,s5 = thr["5d"]
+        b1, s1 = thr["1d"]
+        b3, s3 = thr["3d"]
+        b5, s5 = thr["5d"]
+
         r1 = rec_from_prob(p1, max(b1, pack["1d"]["opt_thr"]), s1)
         r3 = rec_from_prob(p3, max(b3, pack["3d"]["opt_thr"]), s3)
         r5 = rec_from_prob(p5, max(b5, pack["5d"]["opt_thr"]), s5)
 
-        probs = [x for x in [p1,p3,p5] if not np.isnan(x)]
+        probs = [x for x in [p1, p3, p5] if not np.isnan(x)]
         comp = float(np.mean(probs)) if probs else np.nan
-        accs = [pack[k]["acc"] for k in ["1d","3d","5d"] if not np.isnan(pack[k]["acc"])]
-        aucs = [pack[k]["auc"] for k in ["1d","3d","5d"] if not np.isnan(pack[k]["auc"])]
+
+        accs = [pack[k]["acc"] for k in ["1d", "3d", "5d"] if not np.isnan(pack[k]["acc"])]
+        aucs = [pack[k]["auc"] for k in ["1d", "3d", "5d"] if not np.isnan(pack[k]["auc"])]
         acc = float(np.mean(accs)) if accs else np.nan
         auc = float(np.mean(aucs)) if aucs else np.nan
 
@@ -440,7 +443,7 @@ if run:
             "Acc": acc, "AUC": auc, "Composite": comp
         })
 
-        progress.progress(i/len(tickers))
+        progress.progress(i / len(tickers))
 
     status.empty()
     progress.empty()
@@ -624,6 +627,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
