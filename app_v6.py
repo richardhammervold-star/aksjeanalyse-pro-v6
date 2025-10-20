@@ -329,7 +329,7 @@ yv = pack[y.name]
 if len(np.unique(yv.values.astype(int))) < 2:
     neut = pd.Series(0.5, index=pack.index, name="proba")
     out[key] = {
-        "proba": neut,
+        "proba": neut,           # 50 % sannsynlighet
         "acc": np.nan,
         "auc": np.nan,
         "opt_thr": 0.5,
@@ -339,6 +339,8 @@ if len(np.unique(yv.values.astype(int))) < 2:
 
 # 9) Tren og lagre
 proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
+
+
 
 out[key] = {
     "proba": proba_full,
@@ -618,6 +620,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
