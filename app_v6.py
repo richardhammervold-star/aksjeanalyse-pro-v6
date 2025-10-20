@@ -126,8 +126,10 @@ else:
 
 st.sidebar.markdown("---")
 want_excel = st.sidebar.checkbox("Eksporter Excel (flere ark)", value=True)
-eps = st.sidebar.number_input("Støyfilter (eps, %)", value=0.2, min_value=0.0, max_value=2.0, step=0.1,
-                              help="Bevegelser med absolutt avkastning < eps% behandles som støy.")
+eps = st.sidebar.number_input(
+    "Støyfilter (eps, %)", value=0.2, min_value=0.0, max_value=2.0, step=0.1,
+    help="Bevegelser med absolutt avkastning < eps% behandles som støy."
+)
 st.sidebar.caption("Tips: Norske aksjer bruker .OL (EQNR.OL). Valuta = '=X' (EURNOK=X). Råvarer: CL=F, GC=F.")
 
 # -----------------------------
@@ -215,7 +217,7 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
         Xtr, ytr = X.iloc[tr0:tr1], y.iloc[tr0:tr1]
         Xva, yva = X.iloc[va0:va1], y.iloc[va0:va1]
 
-        if len(Xva)==0 or len(np.unique(ytr.dropna().astype(int))) < 2:
+        if len(Xva) == 0 or len(np.unique(ytr.dropna().astype(int))) < 2:
             continue
 
         scaler = RobustScaler().fit(Xtr)
@@ -255,7 +257,7 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
     opt_thr = float(np.nanmean(thrs)) if len(thrs) else 0.5
     return proba_full, acc, auc, opt_thr
 
-# ---- PATCHED: robust mot manglende feature-kolonner ----
+# ---- PATCHED: robust mot manglende feature-kolonner og tynn data ----
 def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
     """
     Bygger indikatorer én gang og trener tre modeller (1/3/5d).
@@ -281,27 +283,23 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
                         "opt_thr": 0.5, "last_date": None}
         return out
 
-    # --------- ALT FRA NÅ AV LIGGER INNI DENNE LØKKA ---------
+    # 3) Per horisont
     for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
-
-        # 3) Label
+        # Label
         y = make_label(df, H, eps_pct)
         if y is None or len(y) != len(df):
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
                         "opt_thr": 0.5, "last_date": None}
             continue
 
-        # 4) Sjekk tilgjengelige features mot df igjen
         available = [c for c in feat_base if c in df.columns]
         if not available:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
                         "opt_thr": 0.5, "last_date": None}
             continue
 
-        # 5) Slå sammen (uten subset i dropna for å unngå KeyError)
+        # Slå sammen og rens
         pack = pd.concat([df[available], y], axis=1)
-
-        # 6) Kryssjekk kolonnenavn mot pack (kan avvike i sjeldne tilfeller)
         cols_in_pack = [c for c in available if c in pack.columns]
         if not cols_in_pack or y.name not in pack.columns:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
@@ -309,9 +307,12 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             continue
 
         pack = pack.dropna()
-        if pack.empty or len(pack) < 60:
+
+        # (A1) Fallback: for lite data etter rensing -> nøytral serie
+        if pack.empty or len(pack) < 120:
+            neut_index = pack.index if len(pack) else df.index
             out[key] = {
-                "proba": pd.Series(0.5, index=(pack.index if len(pack) else df.index), name="proba"),
+                "proba": pd.Series(0.5, index=neut_index, name="proba"),
                 "acc": np.nan,
                 "auc": np.nan,
                 "opt_thr": 0.5,
@@ -319,15 +320,14 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             }
             continue
 
-        # 7) Velg X/Y med faktiske kolonner i pack
+        # Velg X/Y og sjekk klasser
         X  = pack.loc[:, cols_in_pack]
         yv = pack[y.name]
 
-        # 8) Minst to klasser for å trene – ellers retur 0.5
+        # (A2) Fallback: bare én klasse -> nøytral serie
         if len(np.unique(yv.values.astype(int))) < 2:
-            neut = pd.Series(0.5, index=pack.index, name="proba")
             out[key] = {
-                "proba": neut,    # 50% sannsynlighet
+                "proba": pd.Series(0.5, index=pack.index, name="proba"),
                 "acc": np.nan,
                 "auc": np.nan,
                 "opt_thr": 0.5,
@@ -335,7 +335,7 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             }
             continue
 
-        # 9) Tren og lagre
+        # Tren og lagre
         proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
         out[key] = {
             "proba": proba_full,
@@ -388,11 +388,11 @@ if run:
                 "Acc": np.nan, "AUC": np.nan, "Composite": np.nan
             })
             progress.progress(i / len(tickers))
-            continue  # <-- dette er riktig innrykk
+            continue
 
-        # 👇 alt dette må være på samme nivå som "status.write" (8 mellomrom)
         pack = analyze_ticker_multi(df_raw, eps_pct=eps)
 
+        # (B) Trygg henter: siste proba, med 0.5 som nøytral reserve
         def last_proba(key, default=0.5):
             try:
                 s = pack[key]["proba"]
@@ -622,6 +622,8 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
+
 
 
 
