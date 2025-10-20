@@ -264,30 +264,47 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
     out = {}
 
     if df_raw is None or df_raw.empty or "Close" not in df_raw:
-        for key in ["1d","3d","5d"]:
-            out[key] = {
-                "proba": pd.Series(dtype=float),
-                "acc": np.nan,
-                "auc": np.nan,
-                "opt_thr": 0.5,
-                "last_date": None
-            }
+        for key in ["1d", "3d", "5d"]:
+            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
         return out
 
     df = add_indicators(df_raw)
 
-    # feature-set som faktisk finnes
-    feat_cols = [c for c in FEATURES_ALL if c in df.columns]
+    # --- Sikre at kun gyldige features brukes ---
+    feat_cols = [c for c in FEATURES_ALL if c in df.columns and df[c].notna().any()]
+
     if len(feat_cols) == 0:
-        for key in ["1d","3d","5d"]:
-            out[key] = {
-                "proba": pd.Series(dtype=float),
-                "acc": np.nan,
-                "auc": np.nan,
-                "opt_thr": 0.5,
-                "last_date": None
-            }
+        for key in ["1d", "3d", "5d"]:
+            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
         return out
+
+    for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
+        y = make_label(df, H, eps_pct)
+
+        # --- Bruk kun kolonner som faktisk finnes ---
+        available = [c for c in feat_cols if c in df.columns]
+        if not available:
+            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
+            continue
+
+        pack = pd.concat([df[available], y], axis=1).dropna(subset=available + [y.name])
+        if pack.empty or len(pack) < 120:
+            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
+            continue
+
+        X = pack[available]
+        yv = pack[y.name]
+        proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
+
+        out[key] = {
+            "proba": proba_full,
+            "acc": acc,
+            "auc": auc,
+            "opt_thr": opt_thr,
+            "last_date": pack.index[-1],
+        }
+
+    return out
 
     for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
         y = make_label(df, H, eps_pct)
@@ -520,3 +537,4 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
