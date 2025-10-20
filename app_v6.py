@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime
 from sklearn.preprocessing import RobustScaler
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
@@ -181,19 +181,26 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+# ---- PATCHED: trygg 1D label ----
 def make_label(df: pd.DataFrame, horizon: int, eps_frac: float) -> pd.Series:
-    """Mål: retning over neste N dager. eps_frac i % -> konverter til brøkdeler."""
+    """Mål: retning over neste N dager. eps_frac i % -> brøk. Returnerer alltid 1D Series."""
     eps = eps_frac / 100.0
-    fwd = df["Close"].shift(-horizon) / df["Close"] - 1.0
-    target = np.where(fwd > eps, 1, np.where(fwd < -eps, 0, np.nan))
-    return pd.Series(target, index=df.index, name=f"Target_{horizon}")
+    close = df["Close"].astype(float)
+    fwd = close.shift(-horizon) / close - 1.0
+
+    # Bruk .to_numpy() og .ravel() for å sikre 1D
+    fwd_np = fwd.to_numpy()
+    arr = np.where(fwd_np > eps, 1, np.where(fwd_np < -eps, 0, np.nan))
+    arr = np.asarray(arr, dtype="float64").ravel()
+
+    return pd.Series(arr, index=df.index, name=f"Target_{horizon}")
 
 FEATURES_ALL = [
     "ret1","ret3","ret5","ma5","ma20","vol10","trend20","rsi14",
     "ema20","ema50","ema_gap","bb_pct","bb_width","macd","macd_sig","macd_hist"
 ]
 
-def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series) -> tuple[pd.Series, float, float, float]:
+def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
     """Expanding walk-forward CV for validering + tren endelig modell på hele datasettet."""
     n = len(X)
     if n < 120 or y.isna().sum() > 0:
@@ -209,7 +216,6 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series) -> tuple[pd.Series, f
         Xtr, ytr = X.iloc[tr0:tr1], y.iloc[tr0:tr1]
         Xva, yva = X.iloc[va0:va1], y.iloc[va0:va1]
 
-        # hopp hvis lite variasjon
         if len(Xva)==0 or len(np.unique(ytr.dropna().astype(int))) < 2:
             continue
 
@@ -286,9 +292,6 @@ def rec_from_prob(prob: float, buy_thr: float, sell_thr: float) -> str:
     if prob < sell_thr:
         return "SELL"
     return "HOLD"
-
-def fmt_pct(x):
-    return "—" if pd.isna(x) else f"{x*100:.2f}%"
 
 def expected_date(last_date: pd.Timestamp, horizon_days: int) -> str:
     if last_date is None or pd.isna(last_date):
@@ -420,14 +423,12 @@ if run:
         try:
             raw = fetch_history(sel, start=start_date, end=end_date)
             pack = analyze_ticker_multi(raw, eps_pct=eps)
-            # Lag datasett med alle tre proba-linjer
             plot_df = pd.DataFrame({
                 "Close": raw["Close"],
                 "Prob_1d": pack["1d"]["proba"].reindex(raw.index),
                 "Prob_3d": pack["3d"]["proba"].reindex(raw.index),
                 "Prob_5d": pack["5d"]["proba"].reindex(raw.index),
-            })
-            plot_df = plot_df.dropna(subset=["Close"])
+            }).dropna(subset=["Close"])
 
             fig, ax1 = plt.subplots(figsize=(10,4))
             ax1.plot(plot_df.index, plot_df["Close"])
