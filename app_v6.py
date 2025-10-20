@@ -320,34 +320,34 @@ if pack.empty or len(pack) < 120:
         "last_date": (pack.index[-1] if len(pack) else None),
     }
     continue
-
+    
 # 7) Velg X/Y med faktiske kolonner i pack
 X  = pack.loc[:, cols_in_pack]
 yv = pack[y.name]
 
+# 8) Må ha minst to klasser for å trene – ellers returnér 0.5 som nøytral sannsynlighet
+if len(np.unique(yv.values.astype(int))) < 2:
+    neut = pd.Series(0.5, index=pack.index, name="proba")
+    out[key] = {
+        "proba": neut,
+        "acc": np.nan,
+        "auc": np.nan,
+        "opt_thr": 0.5,
+        "last_date": pack.index[-1],
+    }
+    continue
 
-        # 8) Må ha minst to klasser for å trene – ellers returnér 0.5 som nøytral sannsynlighet
-        if len(np.unique(yv.values.astype(int))) < 2:
-            neut = pd.Series(0.5, index=pack.index, name="proba")
-            out[key] = {
-                "proba": neut,           # 50% sannsynlighet
-                "acc": np.nan,
-                "auc": np.nan,
-                "opt_thr": 0.5,
-                "last_date": pack.index[-1],
-            }
-            continue
+# 9) Tren og lagre
+proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
 
-        # 9) Tren og lagre
-        proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
+out[key] = {
+    "proba": proba_full,
+    "acc": acc,
+    "auc": auc,
+    "opt_thr": opt_thr,
+    "last_date": pack.index[-1],
+}
 
-        out[key] = {
-            "proba": proba_full,
-            "acc": acc,
-            "auc": auc,
-            "opt_thr": opt_thr,
-            "last_date": pack.index[-1],
-        }
 
     return out
 
@@ -618,6 +618,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
