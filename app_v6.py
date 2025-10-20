@@ -341,7 +341,6 @@ if len(np.unique(yv.values.astype(int))) < 2:
 proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
 
 
-
 out[key] = {
     "proba": proba_full,
     "acc": acc,
@@ -620,6 +619,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
