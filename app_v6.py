@@ -350,7 +350,7 @@ out[key] = {
 }
 
 
-    return out
+return out
 
 def rec_from_prob(prob: float, buy_thr: float, sell_thr: float) -> str:
     if np.isnan(prob):
@@ -619,6 +619,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
