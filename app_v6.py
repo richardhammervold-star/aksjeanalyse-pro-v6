@@ -394,22 +394,25 @@ if run:
             progress.progress(i/len(tickers))
             continue
 
-        pack = analyze_ticker_multi(df_raw, eps_pct=eps)
+                pack = analyze_ticker_multi(df_raw, eps_pct=eps)
 
-       # Hent siste proba per horisont + nøytral fallback 0.50
-def last_proba(key, default=0.5):
-    try:
-        s = pack[key]["proba"]
-        if len(s) == 0:
-            return default
-        v = float(s.iloc[-1])
-        if np.isnan(v):
-            return default
-        return v
-    except Exception:
-        return default
+        # Hent siste proba per horisont + nøytral fallback 0.50
+        def last_proba(key, default=0.5):
+            try:
+                s = pack[key]["proba"]
+                if len(s) == 0:
+                    return default
+                v = float(s.iloc[-1])
+                if np.isnan(v):
+                    return default
+                return v
+            except Exception:
+                return default
 
-p1 = last_proba("1d"); p3 = last_proba("3d"); p5 = last_proba("5d")
+        p1 = last_proba("1d")
+        p3 = last_proba("3d")
+        p5 = last_proba("5d")
+
         date1 = expected_date(pack["1d"]["last_date"], 1)
         date3 = expected_date(pack["3d"]["last_date"], 3)
         date5 = expected_date(pack["5d"]["last_date"], 5)
@@ -619,6 +622,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
