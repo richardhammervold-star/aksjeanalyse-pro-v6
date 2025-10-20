@@ -308,13 +308,22 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
 
         pack = pack.dropna()
         if pack.empty or len(pack) < 120:
-            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
-                        "opt_thr": 0.5, "last_date": (pack.index[-1] if len(pack) else None)}
-            continue
+    # Nøytral fallback = 50 % sannsynlighet
+    neut_index = pack.index if len(pack) else df.index
+    neut = pd.Series(0.5, index=neut_index, name="proba")
+    out[key] = {
+        "proba": neut,
+        "acc": np.nan,
+        "auc": np.nan,
+        "opt_thr": 0.5,
+        "last_date": (pack.index[-1] if len(pack) else None),
+    }
+    continue
 
                 # 7) Velg X/Y med faktiske kolonner i pack
-        X  = pack.loc[:, cols_in_pack]
-        yv = pack[y.name]
+X  = pack.loc[:, cols_in_pack]
+yv = pack[y.name]
+
 
         # 8) Må ha minst to klasser for å trene – ellers returnér 0.5 som nøytral sannsynlighet
         if len(np.unique(yv.values.astype(int))) < 2:
@@ -600,6 +609,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
