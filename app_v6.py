@@ -376,12 +376,13 @@ if run:
     progress = st.progress(0)
     status = st.empty()
 
-    for i, t in enumerate(tickers, start=1):
+        for i, t in enumerate(tickers, start=1):
         status.write(f"Henter og analyserer: {t}  ({i}/{len(tickers)})")
         try:
             df_raw = fetch_history(t, start=start_date, end=end_date)
         except Exception:
             df_raw = pd.DataFrame()
+
         if df_raw is None or df_raw.empty or "Close" not in df_raw:
             results.append({
                 "Ticker": t,
@@ -391,12 +392,13 @@ if run:
                 "Delta_5d_1d": np.nan,
                 "Acc": np.nan, "AUC": np.nan, "Composite": np.nan
             })
-            progress.progress(i/len(tickers))
+            progress.progress(i / len(tickers))
             continue
 
-                pack = analyze_ticker_multi(df_raw, eps_pct=eps)
+        # 🚀 Viktig: denne linjen skal ha 8 mellomrom (samme som if/try/except)
+        pack = analyze_ticker_multi(df_raw, eps_pct=eps)
 
-        # Hent siste proba per horisont + nøytral fallback 0.50
+        # Hent siste proba per horisont med fallback 0.5
         def last_proba(key, default=0.5):
             try:
                 s = pack[key]["proba"]
@@ -622,6 +624,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
