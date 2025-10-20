@@ -309,7 +309,7 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             continue
 
         pack = pack.dropna()
-        if pack.empty or len(pack) < 120:
+        if pack.empty or len(pack) < 60:
             out[key] = {
                 "proba": pd.Series(0.5, index=(pack.index if len(pack) else df.index), name="proba"),
                 "acc": np.nan,
@@ -622,6 +622,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
