@@ -312,16 +312,23 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
                         "opt_thr": 0.5, "last_date": (pack.index[-1] if len(pack) else None)}
             continue
 
-        # 7) Velg X/Y med faktiske kolonner i pack
-        X = pack.loc[:, cols_in_pack]
+                # 7) Velg X/Y med faktiske kolonner i pack
+        X  = pack.loc[:, cols_in_pack]
         yv = pack[y.name]
 
-        # 8) Må ha minst to klasser for å trene
+        # 8) Må ha minst to klasser for å trene – ellers returnér 0.5 som nøytral sannsynlighet
         if len(np.unique(yv.values.astype(int))) < 2:
-            out[key] = {"proba": pd.Series(dtype=float, index=pack.index), "acc": np.nan, "auc": np.nan,
-                        "opt_thr": 0.5, "last_date": pack.index[-1]}
+            neut = pd.Series(0.5, index=pack.index, name="proba")
+            out[key] = {
+                "proba": neut,           # 50% sannsynlighet
+                "acc": np.nan,
+                "auc": np.nan,
+                "opt_thr": 0.5,
+                "last_date": pack.index[-1],
+            }
             continue
 
+        # 9) Tren og lagre
         proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
 
         out[key] = {
@@ -330,34 +337,6 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             "auc": auc,
             "opt_thr": opt_thr,
             "last_date": pack.index[-1],
-        }
-
-    return out
-
-    for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
-        y = make_label(df, H, eps_pct)
-        pack = pd.concat([df[feat_cols], y], axis=1).dropna()
-
-        if pack.empty or len(pack) < 120:
-            out[key] = {
-                "proba": pd.Series(dtype=float, index=df.index),
-                "acc": np.nan,
-                "auc": np.nan,
-                "opt_thr": 0.5,
-                "last_date": pack.index[-1] if len(pack) else None
-            }
-            continue
-
-        X = pack[feat_cols]
-        yv = pack[y.name]
-        proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
-
-        out[key] = {
-            "proba": proba_full,
-            "acc": acc,
-            "auc": auc,
-            "opt_thr": opt_thr,
-            "last_date": pack.index[-1]
         }
 
     return out
@@ -459,6 +438,12 @@ def style_df(df: pd.DataFrame, fmt_map: dict):
 # -----------------------------
 if run:
     df = pd.DataFrame(results)
+
+    # Sørg for numeriske kolonner (coerce None -> NaN -> tall-format fungerer)
+    num_cols = ["Prob_1d", "Prob_3d", "Prob_5d", "Acc", "AUC", "Delta_5d_1d", "Composite"]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
 
     c1, c2, c3 = st.columns(3)
 
@@ -615,6 +600,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
