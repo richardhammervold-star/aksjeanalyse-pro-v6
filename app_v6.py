@@ -307,7 +307,8 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             continue
 
         pack = pack.dropna()
-        if pack.empty or len(pack) < 120:
+
+if pack.empty or len(pack) < 120:
     # Nøytral fallback = 50 % sannsynlighet
     neut_index = pack.index if len(pack) else df.index
     neut = pd.Series(0.5, index=neut_index, name="proba")
@@ -320,7 +321,7 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
     }
     continue
 
-                # 7) Velg X/Y med faktiske kolonner i pack
+# 7) Velg X/Y med faktiske kolonner i pack
 X  = pack.loc[:, cols_in_pack]
 yv = pack[y.name]
 
@@ -617,6 +618,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
