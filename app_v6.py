@@ -77,7 +77,6 @@ PRESETS = {
     "Råvarer": ["CL=F","BZ=F","NG=F","GC=F","SI=F","HG=F","ZC=F","ZW=F","ZS=F"],
     "Valuta (Forex)": ["EURUSD=X","USDJPY=X","GBPUSD=X","AUDUSD=X","USDCAD=X","USDCHF=X","EURNOK=X","USDNOK=X","EURGBP=X"],
     "Krypto": ["BTC-USD","ETH-USD","SOL-USD","XRP-USD","ADA-USD"],
-    # Ny preset: USA – Teknologi
     "USA – Teknologi": [
         "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","AMD","CRM","ORCL","NFLX","NOW","INTU","PANW"
     ]
@@ -256,14 +255,16 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
     opt_thr = float(np.nanmean(thrs)) if len(thrs) else 0.5
     return proba_full, acc, auc, opt_thr
 
+# ---- PATCHED: robust mot manglende feature-kolonner ----
 def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
-    """Bygg features én gang (cache), tren tre modeller (1/3/5d) og returnér pakke."""
-    df = add_indicators(df_raw)
+    """
+    Bygger indikatorer én gang og trener tre modeller (1/3/5d).
+    ROBUST: bruker bare feature-kolonnene som faktisk finnes.
+    """
     out = {}
-    for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
-        y = make_label(df, H, eps_pct)
-        pack = pd.concat([df[FEATURES_ALL], y], axis=1).dropna()
-        if len(pack) < 120:
+
+    if df_raw is None or df_raw.empty or "Close" not in df_raw:
+        for key in ["1d","3d","5d"]:
             out[key] = {
                 "proba": pd.Series(dtype=float),
                 "acc": np.nan,
@@ -271,10 +272,41 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
                 "opt_thr": 0.5,
                 "last_date": None
             }
+        return out
+
+    df = add_indicators(df_raw)
+
+    # feature-set som faktisk finnes
+    feat_cols = [c for c in FEATURES_ALL if c in df.columns]
+    if len(feat_cols) == 0:
+        for key in ["1d","3d","5d"]:
+            out[key] = {
+                "proba": pd.Series(dtype=float),
+                "acc": np.nan,
+                "auc": np.nan,
+                "opt_thr": 0.5,
+                "last_date": None
+            }
+        return out
+
+    for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
+        y = make_label(df, H, eps_pct)
+        pack = pd.concat([df[feat_cols], y], axis=1).dropna()
+
+        if pack.empty or len(pack) < 120:
+            out[key] = {
+                "proba": pd.Series(dtype=float, index=df.index),
+                "acc": np.nan,
+                "auc": np.nan,
+                "opt_thr": 0.5,
+                "last_date": pack.index[-1] if len(pack) else None
+            }
             continue
-        X = pack[FEATURES_ALL]
+
+        X = pack[feat_cols]
         yv = pack[y.name]
         proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
+
         out[key] = {
             "proba": proba_full,
             "acc": acc,
@@ -282,6 +314,7 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             "opt_thr": opt_thr,
             "last_date": pack.index[-1]
         }
+
     return out
 
 def rec_from_prob(prob: float, buy_thr: float, sell_thr: float) -> str:
@@ -343,10 +376,8 @@ if run:
         r3 = rec_from_prob(p3, max(b3, pack["3d"]["opt_thr"]), s3)
         r5 = rec_from_prob(p5, max(b5, pack["5d"]["opt_thr"]), s5)
 
-        # En enkel samlet score: snitt av tilgjengelige sannsynligheter
         probs = [x for x in [p1,p3,p5] if not np.isnan(x)]
         comp = float(np.mean(probs)) if probs else np.nan
-        # valideringsscore: snitt av tilgjengelige
         accs = [pack[k]["acc"] for k in ["1d","3d","5d"] if not np.isnan(pack[k]["acc"])]
         aucs = [pack[k]["auc"] for k in ["1d","3d","5d"] if not np.isnan(pack[k]["auc"])]
         acc = float(np.mean(accs)) if accs else np.nan
