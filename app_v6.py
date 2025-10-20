@@ -465,8 +465,8 @@ if run:
         st.subheader("🟩 1 dag frem")
         df1 = df[["Ticker","Prob_1d","Rec_1d","Date_1d","Acc"]].copy()
         df1 = df1.sort_values("Prob_1d", ascending=False)
-        st.dataframe(
-    style_df(df1, {"Prob_1d":"{:.2%}","Acc":"{:.2%}"}),
+       st.dataframe(
+    style_df(df1, {"Prob_1d": "{:.2%}", "Acc": "{:.2%}"}),
     use_container_width=True
 )
 
@@ -475,7 +475,7 @@ if run:
         df3 = df[["Ticker","Prob_3d","Rec_3d","Date_3d","Acc"]].copy()
         df3 = df3.sort_values("Prob_3d", ascending=False)
         st.dataframe(
-    style_df(df3, {"Prob_3d":"{:.2%}","Acc":"{:.2%}"}),
+    style_df(df3, {"Prob_3d": "{:.2%}", "Acc": "{:.2%}"}),
     use_container_width=True
 )
 
@@ -484,10 +484,9 @@ if run:
         df5 = df[["Ticker","Prob_5d","Rec_5d","Date_5d","Acc","Delta_5d_1d"]].copy()
         df5 = df5.sort_values("Prob_5d", ascending=False)
         st.dataframe(
-    style_df(df5, {"Prob_5d":"{:.2%}","Acc":"{:.2%}","Delta_5d_1d":"{:.2%}"}),
+    style_df(df5, {"Prob_5d": "{:.2%}", "Acc": "{:.2%}", "Delta_5d_1d": "{:.2%}"}),
     use_container_width=True
 )
-
     st.markdown("---")
     st.subheader("📋 Sammenligningstabell (alle horisonter)")
     st.dataframe(
@@ -569,24 +568,30 @@ if run:
         tmp["SavedAtUTC"] = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M")
         st.session_state["history_v6"] = pd.concat([hist, tmp], ignore_index=True)
         st.success("Lagt til historikk i denne økten.")
-    st.dataframe(
-    style_df(
-        df[["Ticker",
-            "Prob_1d","Rec_1d","Date_1d",
-            "Prob_3d","Rec_3d","Date_3d",
-            "Prob_5d","Rec_5d","Date_5d",
-            "Delta_5d_1d","Acc","AUC","Composite"
-        ]].sort_values("Composite", ascending=False),
-        {
-            "Prob_1d":"{:.2%}","Prob_3d":"{:.2%}","Prob_5d":"{:.2%}",
-            "Delta_5d_1d":"{:.2%}","Acc":"{:.2%}","AUC":"{:.3f}","Composite":"{:.2%}"
-        }
-    ),
+    cmp_df = df[[
+    "Ticker",
+    "Prob_1d","Rec_1d","Date_1d",
+    "Prob_3d","Rec_3d","Date_3d",
+    "Prob_5d","Rec_5d","Date_5d",
+    "Delta_5d_1d","Acc","AUC","Composite"
+]].sort_values("Composite", ascending=False)
+
+st.dataframe(
+    style_df(cmp_df, {
+        "Prob_1d": "{:.2%}",
+        "Prob_3d": "{:.2%}",
+        "Prob_5d": "{:.2%}",
+        "Delta_5d_1d": "{:.2%}",
+        "Acc": "{:.2%}",
+        "AUC": "{:.3f}",
+        "Composite": "{:.2%}"
+    }),
     use_container_width=True
 )
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
