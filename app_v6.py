@@ -259,18 +259,21 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
 def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
     """
     Bygger indikatorer én gang og trener tre modeller (1/3/5d).
-    ROBUST: bruker bare feature-kolonnene som faktisk finnes.
+    ROBUST: bruker bare feature-kolonnene som faktisk finnes,
+    og unngår KeyError i dropna/subset.
     """
     out = {}
 
+    # Tomt/ugyldig datagrunnlag
     if df_raw is None or df_raw.empty or "Close" not in df_raw:
         for key in ["1d", "3d", "5d"]:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
         return out
 
+    # Indikatorer
     df = add_indicators(df_raw)
 
-    # --- Sikre at kun gyldige features brukes ---
+    # Kun features som faktisk finnes og har minst én ikke-NaN verdi
     feat_cols = [c for c in FEATURES_ALL if c in df.columns and df[c].notna().any()]
 
     if len(feat_cols) == 0:
@@ -281,19 +284,40 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
     for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
         y = make_label(df, H, eps_pct)
 
-        # --- Bruk kun kolonner som faktisk finnes ---
+        # Sjekk at y finnes og har samme index
+        if y is None or len(y) != len(df):
+            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
+            continue
+
+        # Bruk kun tilgjengelige kolonner som faktisk er i df akkurat nå
         available = [c for c in feat_cols if c in df.columns]
         if not available:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
             continue
 
-        pack = pd.concat([df[available], y], axis=1).dropna(subset=available + [y.name])
-        if pack.empty or len(pack) < 120:
+        # Slå sammen uten subset i dropna (unngår KeyError)
+        pack = pd.concat([df[available], y], axis=1)
+
+        # Hvis label-kolonnen mangler (uvanlig), hopp trygt
+        if y.name not in pack.columns:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
+            continue
+
+        pack = pack.dropna()
+        if pack.empty or len(pack) < 120:
+            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5,
+                        "last_date": pack.index[-1] if len(pack) else None}
             continue
 
         X = pack[available]
         yv = pack[y.name]
+
+        # Sikkerhet: må ha minst to klasser i trening
+        if len(np.unique(yv.values.astype(int))) < 2:
+            out[key] = {"proba": pd.Series(dtype=float, index=pack.index), "acc": np.nan, "auc": np.nan,
+                        "opt_thr": 0.5, "last_date": pack.index[-1]}
+            continue
+
         proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
 
         out[key] = {
@@ -301,7 +325,7 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             "acc": acc,
             "auc": auc,
             "opt_thr": opt_thr,
-            "last_date": pack.index[-1],
+            "last_date": pack.index[-1]
         }
 
     return out
@@ -537,4 +561,5 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
