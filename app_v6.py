@@ -340,19 +340,21 @@ if run:
 
         pack = analyze_ticker_multi(df_raw, eps_pct=eps)
 
-        def last_proba(key, default=np.nan):
-            try:
-                s = pack[key]["proba"]
-                if len(s) == 0:
-                    return default
-                v = float(s.iloc[-1])
-                return v if not np.isnan(v) else default
-            except Exception:
-                return default
+       def last_proba(key, default=np.nan):
+    try:
+        s = pack[key]["proba"]
+        if len(s) == 0:
+            return default
+        v = float(s.iloc[-1])
+        return v if not np.isnan(v) else default
+    except Exception:
+        return default
+
 
         p1 = last_proba("1d")
         p3 = last_proba("3d")
         p5 = last_proba("5d")
+
 
         date1 = expected_date(pack["1d"]["last_date"], 1)
         date3 = expected_date(pack["3d"]["last_date"], 3)
@@ -534,6 +536,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
