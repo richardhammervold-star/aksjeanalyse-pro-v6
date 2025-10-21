@@ -1,7 +1,7 @@
 # app_v6.py
 # 📈 Aksjeanalyse – Pro v6 Dashboard
-# Multi-horisont (1d / 3d / 5d) – side om side
-# Build: v6.1 – oktober 2025
+# Multi-horisont (justerbar, default 1d / 3d / 5d) – side om side
+# Build: v6.2 – oktober 2025
 
 import streamlit as st
 import pandas as pd
@@ -9,7 +9,7 @@ import numpy as np
 import yfinance as yf
 from datetime import datetime
 from sklearn.preprocessing import RobustScaler
-from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, roc_auc_score
 import matplotlib.pyplot as plt
@@ -40,7 +40,7 @@ st.markdown(
 )
 
 st.title("📈 Aksjeanalyse – Pro v6 Dashboard")
-st.caption("Multi-horisont modell (1d / 3d / 5d) • Build: v6.1 – oktober 2025")
+st.caption("Multi-horisont modell (justerbare horisonter) • Build: v6.2 – oktober 2025")
 
 # -----------------------------
 # Presets
@@ -107,29 +107,39 @@ with col_d2:
     end_date = st.date_input("Sluttdato", pd.Timestamp.today())
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Terskler")
-same_thr = st.sidebar.checkbox("Bruk samme terskler på alle horisonter", value=False)
+st.sidebar.subheader("Horisont (dager)")
+H1 = st.sidebar.slider("Horisont A (vises som '1 dag')", 1, 30, 1)
+H3 = st.sidebar.slider("Horisont B (vises som '3 dager')", 1, 30, 3)
+H5 = st.sidebar.slider("Horisont C (vises som '5 dager')", 1, 30, 5)
+HORIZONS = {"1d": H1, "3d": H3, "5d": H5}
 
-def slider_pair(label_buy, label_sell, buy_default=0.65, sell_default=0.50):
+st.sidebar.markdown("---")
+st.sidebar.subheader("Terskler for anbefaling")
+same_thr = st.sidebar.checkbox("Bruk samme terskler på alle horisonter", value=True)
+
+def slider_pair(label_buy, label_sell, buy_default=0.60, sell_default=0.40):
     b = st.sidebar.slider(label_buy, 0.50, 0.90, buy_default, 0.01)
     s = st.sidebar.slider(label_sell, 0.10, 0.50, sell_default, 0.01)
     return b, s
 
 if same_thr:
-    b_all, s_all = slider_pair("KJØP hvis sannsynlighet >", "SELG hvis sannsynlighet <", 0.65, 0.50)
+    b_all, s_all = slider_pair("KJØP hvis sannsynlighet >", "SELG hvis sannsynlighet <", 0.60, 0.40)
     thr = {"1d": (b_all, s_all), "3d": (b_all, s_all), "5d": (b_all, s_all)}
 else:
-    b1, s1 = slider_pair("1 dag • KJØP >", "1 dag • SELG <", 0.65, 0.50)
-    b3, s3 = slider_pair("3 dager • KJØP >", "3 dager • SELG <", 0.65, 0.50)
-    b5, s5 = slider_pair("5 dager • KJØP >", "5 dager • SELG <", 0.65, 0.50)
+    b1, s1 = slider_pair("Horisont A • KJØP >", "Horisont A • SELG <", 0.60, 0.40)
+    b3, s3 = slider_pair("Horisont B • KJØP >", "Horisont B • SELG <", 0.60, 0.40)
+    b5, s5 = slider_pair("Horisont C • KJØP >", "Horisont C • SELG <", 0.60, 0.40)
     thr = {"1d": (b1, s1), "3d": (b3, s3), "5d": (b5, s5)}
 
 st.sidebar.markdown("---")
 want_excel = st.sidebar.checkbox("Eksporter Excel (flere ark)", value=True)
 eps = st.sidebar.number_input(
-    "Støyfilter (eps, %)", value=0.2, min_value=0.0, max_value=2.0, step=0.1,
-    help="Bevegelser med absolutt avkastning < eps% behandles som støy."
+    "Nøytral sone (eps, %)",
+    value=0.2, min_value=0.0, max_value=2.0, step=0.1,
+    help="Bevegelser med absolutt avkastning < eps% regnes som støy (ignoreres ved trening)."
 )
+debug = st.sidebar.checkbox("Vis enkel debug-info (for én ticker)", value=False)
+
 st.sidebar.caption("Tips: Norske aksjer bruker .OL (EQNR.OL). Valuta = '=X' (EURNOK=X). Råvarer: CL=F, GC=F.")
 
 # -----------------------------
@@ -141,108 +151,59 @@ def fetch_history(ticker: str, start, end):
     return df
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Rask felles feature-pipe, robust uthenting av Close som 1D Series."""
+    """Felles feature-pipe som kan gjenbrukes på tvers av horisonter."""
     df = df.copy()
-
-    # Bruk robust hjelper (tåler manglende/dupliserte 'Close', MultiIndex, mm.)
-    close = _get_close_series(df).astype(float)
-
-    # Hvis vi fortsatt ikke har noe brukbart, returner tomt med riktig indeks
-    if close is None or close.size == 0:
-        return pd.DataFrame(index=df.index)
-
-    # --- Features ---
+    # sikre float
+    close = pd.to_numeric(df["Close"], errors="coerce").astype(float)
     ret1 = close.pct_change()
-    out = pd.DataFrame(index=close.index)
-    out["ret1"]  = ret1
-    out["ret3"]  = close.pct_change(3)
-    out["ret5"]  = close.pct_change(5)
-    out["ma5"]   = close.rolling(5).mean()
-    out["ma20"]  = close.rolling(20).mean()
-    out["vol10"] = ret1.rolling(10).std()
-    out["trend20"] = (out["ma20"] - out["ma5"]) / out["ma20"]
+    df["ret1"] = ret1
+    df["ret3"] = close.pct_change(3)
+    df["ret5"] = close.pct_change(5)
+    df["ma5"] = close.rolling(5).mean()
+    df["ma20"] = close.rolling(20).mean()
+    df["vol10"] = ret1.rolling(10).std()
+    df["trend20"] = (df["ma20"] - df["ma5"]) / df["ma20"]
 
     # RSI(14)
     delta = close.diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
-    out["rsi14"] = 100 - (100 / (1 + rs))
+    df["rsi14"] = 100 - (100 / (1 + rs))
 
-    # EMA / MACD
-    out["ema20"] = close.ewm(span=20, adjust=False).mean()
-    out["ema50"] = close.ewm(span=50, adjust=False).mean()
-    out["ema_gap"] = (out["ema20"] - out["ema50"]) / out["ema50"]
+    # EMA/MACD/Bbands
+    df["ema20"] = close.ewm(span=20, adjust=False).mean()
+    df["ema50"] = close.ewm(span=50, adjust=False).mean()
+    df["ema_gap"] = (df["ema20"] - df["ema50"]) / df["ema50"]
 
-    ema12  = close.ewm(span=12, adjust=False).mean()
-    ema26  = close.ewm(span=26, adjust=False).mean()
-    macd   = ema12 - ema26
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26
     signal = macd.ewm(span=9, adjust=False).mean()
-    out["macd"]      = macd
-    out["macd_sig"]  = signal
-    out["macd_hist"] = macd - signal
+    df["macd"] = macd
+    df["macd_sig"] = signal
+    df["macd_hist"] = macd - signal
 
-    # Bollinger
-    ma20  = close.rolling(20).mean()
+    ma20 = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     upper = ma20 + 2 * std20
     lower = ma20 - 2 * std20
-    out["bb_pct"]   = (close - lower) / (upper - lower)
-    out["bb_width"] = (upper - lower) / ma20
+    df["bb_pct"] = (close - lower) / (upper - lower)
+    df["bb_width"] = (upper - lower) / ma20
 
-    # behold indeks (samme som close)
-    out.index = close.index
-    return out
-
-# ---------- ROBUST close-hjelper + label ----------
-def _get_close_series(df: pd.DataFrame) -> pd.Series:
-    """
-    Returner en 1D pandas Series med priser. Tåler:
-    - manglende 'Close'-kolonne (case-insensitivt søk)
-    - dupliserte 'Close'-kolonner (tar første)
-    - DataFrame uten 'Close' -> tar første numeriske kolonne
-    """
-    if isinstance(df, pd.Series):
-        s = df
-    elif isinstance(df, pd.DataFrame):
-        s = None
-        if "Close" in df.columns:
-            s = df["Close"]
-        if s is None:
-            cand = [c for c in df.columns if str(c).lower() == "close"]
-            if cand:
-                s = df[cand[0]]
-        if s is None:
-            cand = [c for c in df.columns if "close" in str(c).lower()]
-            if cand:
-                s = df[cand[0]]
-        if s is None:
-            num = df.select_dtypes(include=[np.number])
-            if num.shape[1] > 0:
-                s = num.iloc[:, 0]
-            else:
-                s = pd.Series(dtype=float, index=df.index)
-    else:
-        s = pd.Series(df)
-
-    if isinstance(s, pd.DataFrame):
-        s = s.iloc[:, 0]
-
-    s = pd.to_numeric(s, errors="coerce")
-    s.name = "Close"
-    return s
+    return df
 
 def make_label(df: pd.DataFrame, horizon: int, eps_frac: float) -> pd.Series:
     """
-    Mål: retning over neste N dager. eps_frac i % -> brøk. Returnerer alltid 1D Series.
+    Mål: retning over neste N dager. eps_frac i % -> brøk.
+    Returnerer 1 for opp (fwd > eps), 0 for ned (fwd < -eps), NaN for nøytral.
     """
-    eps = float(eps_frac) / 100.0
-    close = _get_close_series(df).astype(float)
-
+    eps = eps_frac / 100.0
+    close = pd.to_numeric(df["Close"], errors="coerce").astype(float)
     fwd = close.shift(-horizon) / close - 1.0
-    arr = np.where(fwd > eps, 1, np.where(fwd < -eps, 0, np.nan)).astype("float64")
-    out = pd.Series(arr, index=close.index, name=f"Target_{horizon}")
-    return out
+    # nøytral sone
+    arr = np.where(fwd > eps, 1, np.where(fwd < -eps, 0, np.nan))
+    return pd.Series(arr, index=df.index, name=f"Target_{horizon}")
 
 FEATURES_ALL = [
     "ret1","ret3","ret5","ma5","ma20","vol10","trend20","rsi14",
@@ -250,7 +211,10 @@ FEATURES_ALL = [
 ]
 
 def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
-    """Expanding walk-forward CV for validering + tren endelig modell på hele datasettet."""
+    """
+    Expanding walk-forward CV for validering + tren endelig modell på hele datasettet.
+    Bruker balansert vekt, og kalibrerer sannsynligheter.
+    """
     n = len(X)
     if n < 120 or y.isna().sum() > 0:
         return pd.Series([np.nan]*n, index=X.index), np.nan, np.nan, 0.5
@@ -265,14 +229,16 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
         Xtr, ytr = X.iloc[tr0:tr1], y.iloc[tr0:tr1]
         Xva, yva = X.iloc[va0:va1], y.iloc[va0:va1]
 
-        if len(Xva)==0 or len(np.unique(ytr.dropna().astype(int))) < 2:
+        if len(Xva)==0:
+            continue
+        if len(np.unique(ytr.dropna().astype(int))) < 2:
             continue
 
         scaler = RobustScaler().fit(Xtr)
         Xtr_s = scaler.transform(Xtr)
         Xva_s = scaler.transform(Xva)
 
-        base = GradientBoostingClassifier(random_state=0)
+        base = HistGradientBoostingClassifier(random_state=0, class_weight="balanced")
         clf = CalibratedClassifierCV(base, method="isotonic", cv=3)
         clf.fit(Xtr_s, ytr.astype(int))
 
@@ -290,9 +256,10 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
         except Exception:
             pass
 
+    # Tren endelig modell på hele datasettet
     scaler = RobustScaler().fit(X)
     Xs = scaler.transform(X)
-    base = GradientBoostingClassifier(random_state=0)
+    base = HistGradientBoostingClassifier(random_state=0, class_weight="balanced")
     clf = CalibratedClassifierCV(base, method="isotonic", cv=3)
     clf.fit(Xs, y.astype(int))
     proba_full = clf.predict_proba(Xs)[:, 1]
@@ -303,22 +270,20 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
     opt_thr = float(np.nanmean(thrs)) if len(thrs) else 0.5
     return proba_full, acc, auc, opt_thr
 
-# ---- Robust multi-horisont analyse ----
-def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
+def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float, horizons: dict) -> dict:
+    """
+    Bygger indikatorer én gang og trener modeller for hver horisont.
+    ROBUST mot manglende/rare feature-kolonner på alle steg.
+    """
     out = {}
 
-    if df_raw is None or df_raw.empty:
+    if df_raw is None or df_raw.empty or "Close" not in df_raw:
         for key in ["1d", "3d", "5d"]:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
                         "opt_thr": 0.5, "last_date": None}
         return out
 
     df = add_indicators(df_raw)
-    if df is None or df.empty:
-        for key in ["1d", "3d", "5d"]:
-            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
-                        "opt_thr": 0.5, "last_date": None}
-        return out
 
     feat_base = [c for c in FEATURES_ALL if c in df.columns and df[c].notna().any()]
     if len(feat_base) == 0:
@@ -327,7 +292,8 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
                         "opt_thr": 0.5, "last_date": None}
         return out
 
-    for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
+    for key, H in horizons.items():
+        # 3) Label med nøytral sone
         y = make_label(df, H, eps_pct)
         if y is None or len(y) != len(df):
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
@@ -341,6 +307,7 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
             continue
 
         pack = pd.concat([df[available], y], axis=1)
+
         cols_in_pack = [c for c in available if c in pack.columns]
         if not cols_in_pack or y.name not in pack.columns:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
@@ -351,17 +318,25 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
         if pack.empty or len(pack) < 120:
             out[key] = {
                 "proba": pd.Series(0.5, index=(pack.index if len(pack) else df.index), name="proba"),
-                "acc": np.nan, "auc": np.nan, "opt_thr": 0.5,
+                "acc": np.nan,
+                "auc": np.nan,
+                "opt_thr": 0.5,
                 "last_date": (pack.index[-1] if len(pack) else None),
             }
             continue
 
-        X = pack.loc[:, cols_in_pack]
+        X  = pack.loc[:, cols_in_pack]
         yv = pack[y.name]
 
         if len(np.unique(yv.values.astype(int))) < 2:
             neut = pd.Series(0.5, index=pack.index, name="proba")
-            out[key] = {"proba": neut, "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": pack.index[-1]}
+            out[key] = {
+                "proba": neut,
+                "acc": np.nan,
+                "auc": np.nan,
+                "opt_thr": 0.5,
+                "last_date": pack.index[-1],
+            }
             continue
 
         proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
@@ -406,18 +381,19 @@ if run:
         except Exception:
             df_raw = pd.DataFrame()
 
-        if df_raw is None or df_raw.empty:
+        if df_raw is None or df_raw.empty or "Close" not in df_raw:
             results.append({
                 "Ticker": t,
                 "Prob_1d": np.nan, "Rec_1d": "HOLD", "Date_1d": "—",
                 "Prob_3d": np.nan, "Rec_3d": "HOLD", "Date_3d": "—",
                 "Prob_5d": np.nan, "Rec_5d": "HOLD", "Date_5d": "—",
-                "Delta_5d_1d": np.nan, "Acc": np.nan, "AUC": np.nan, "Composite": np.nan
+                "Delta_5d_1d": np.nan,
+                "Acc": np.nan, "AUC": np.nan, "Composite": np.nan
             })
             progress.progress(i / len(tickers))
             continue
 
-        pack = analyze_ticker_multi(df_raw, eps_pct=eps)
+        pack = analyze_ticker_multi(df_raw, eps_pct=eps, horizons=HORIZONS)
 
         def last_proba(key, default=0.5):
             try:
@@ -435,18 +411,20 @@ if run:
         p3 = last_proba("3d")
         p5 = last_proba("5d")
 
-        date1 = expected_date(pack["1d"]["last_date"], 1)
-        date3 = expected_date(pack["3d"]["last_date"], 3)
-        date5 = expected_date(pack["5d"]["last_date"], 5)
+        date1 = expected_date(pack["1d"]["last_date"], H1)
+        date3 = expected_date(pack["3d"]["last_date"], H3)
+        date5 = expected_date(pack["5d"]["last_date"], H5)
 
-        b1, s1 = thr["1d"]; b3, s3 = thr["3d"]; b5, s5 = thr["5d"]
+        b1, s1 = thr["1d"]
+        b3, s3 = thr["3d"]
+        b5, s5 = thr["5d"]
+
         r1 = rec_from_prob(p1, max(b1, pack["1d"]["opt_thr"]), s1)
         r3 = rec_from_prob(p3, max(b3, pack["3d"]["opt_thr"]), s3)
         r5 = rec_from_prob(p5, max(b5, pack["5d"]["opt_thr"]), s5)
 
-        probs = [x for x in [p1, p3, p5] if not np.isnan(x)]
+        probs = [x for x in [p1,p3,p5] if not np.isnan(x)]
         comp = float(np.mean(probs)) if probs else np.nan
-
         accs = [pack[k]["acc"] for k in ["1d","3d","5d"] if not np.isnan(pack[k]["acc"])]
         aucs = [pack[k]["auc"] for k in ["1d","3d","5d"] if not np.isnan(pack[k]["auc"])]
         acc = float(np.mean(accs)) if accs else np.nan
@@ -460,6 +438,13 @@ if run:
             "Delta_5d_1d": (p5 - p1) if (not np.isnan(p5) and not np.isnan(p1)) else np.nan,
             "Acc": acc, "AUC": auc, "Composite": comp
         })
+
+        if debug and i == 1:
+            st.write("🔎 Debug – features (head):")
+            try:
+                st.write(add_indicators(df_raw).head())
+            except Exception:
+                pass
 
         progress.progress(i / len(tickers))
 
@@ -482,7 +467,6 @@ def style_df(df: pd.DataFrame, fmt_map: dict):
 # -----------------------------
 if run:
     df = pd.DataFrame(results)
-
     num_cols = ["Prob_1d", "Prob_3d", "Prob_5d", "Acc", "AUC", "Delta_5d_1d", "Composite"]
     for c in num_cols:
         if c in df.columns:
@@ -491,19 +475,31 @@ if run:
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        st.subheader("🟩 1 dag frem")
-        df1 = df[["Ticker", "Prob_1d", "Rec_1d", "Date_1d", "Acc"]].copy().sort_values("Prob_1d", ascending=False)
-        st.dataframe(style_df(df1, {"Prob_1d": "{:.2%}", "Acc": "{:.2%}"}), use_container_width=True)
+        st.subheader(f"🟩 {H1} dag(er) frem")
+        df1 = df[["Ticker", "Prob_1d", "Rec_1d", "Date_1d", "Acc"]].copy()
+        df1 = df1.sort_values("Prob_1d", ascending=False)
+        st.dataframe(
+            style_df(df1, {"Prob_1d": "{:.2%}", "Acc": "{:.2%}"}),
+            use_container_width=True
+        )
 
     with c2:
-        st.subheader("🟦 3 dager frem")
-        df3 = df[["Ticker", "Prob_3d", "Rec_3d", "Date_3d", "Acc"]].copy().sort_values("Prob_3d", ascending=False)
-        st.dataframe(style_df(df3, {"Prob_3d": "{:.2%}", "Acc": "{:.2%}"}), use_container_width=True)
+        st.subheader(f"🟦 {H3} dag(er) frem")
+        df3 = df[["Ticker", "Prob_3d", "Rec_3d", "Date_3d", "Acc"]].copy()
+        df3 = df3.sort_values("Prob_3d", ascending=False)
+        st.dataframe(
+            style_df(df3, {"Prob_3d": "{:.2%}", "Acc": "{:.2%}"}),
+            use_container_width=True
+        )
 
     with c3:
-        st.subheader("🟧 5 dager frem")
-        df5 = df[["Ticker", "Prob_5d", "Rec_5d", "Date_5d", "Acc", "Delta_5d_1d"]].copy().sort_values("Prob_5d", ascending=False)
-        st.dataframe(style_df(df5, {"Prob_5d": "{:.2%}", "Acc": "{:.2%}", "Delta_5d_1d": "{:.2%}"}), use_container_width=True)
+        st.subheader(f"🟧 {H5} dag(er) frem")
+        df5 = df[["Ticker", "Prob_5d", "Rec_5d", "Date_5d", "Acc", "Delta_5d_1d"]].copy()
+        df5 = df5.sort_values("Prob_5d", ascending=False)
+        st.dataframe(
+            style_df(df5, {"Prob_5d": "{:.2%}", "Acc": "{:.2%}", "Delta_5d_1d": "{:.2%}"}),
+            use_container_width=True
+        )
 
     st.markdown("---")
     st.subheader("📋 Sammenligningstabell (alle horisonter)")
@@ -536,18 +532,18 @@ if run:
     # Detalj: graf per ticker
     # -------------------------
     st.markdown("---")
-    st.subheader("📊 Detaljvisning (pris + sannsynlighet 1d/3d/5d)")
+    st.subheader("📊 Detaljvisning (pris + sannsynlighet A/B/C)")
     sel_list = df["Ticker"].tolist() if not df.empty else []
     sel = st.selectbox("Velg ticker", sel_list)
     if sel:
         try:
             raw = fetch_history(sel, start=start_date, end=end_date)
-            pack = analyze_ticker_multi(raw, eps_pct=eps)
+            pack = analyze_ticker_multi(raw, eps_pct=eps, horizons=HORIZONS)
             plot_df = pd.DataFrame({
-                "Close": _get_close_series(raw),
-                "Prob_1d": pack["1d"]["proba"].reindex(raw.index),
-                "Prob_3d": pack["3d"]["proba"].reindex(raw.index),
-                "Prob_5d": pack["5d"]["proba"].reindex(raw.index),
+                "Close": raw["Close"],
+                "Prob_A": pack["1d"]["proba"].reindex(raw.index),
+                "Prob_B": pack["3d"]["proba"].reindex(raw.index),
+                "Prob_C": pack["5d"]["proba"].reindex(raw.index),
             }).dropna(subset=["Close"])
 
             fig, ax1 = plt.subplots(figsize=(10, 4))
@@ -556,13 +552,13 @@ if run:
             ax1.set_ylabel("Pris")
 
             ax2 = ax1.twinx()
-            if "Prob_1d" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_1d"], alpha=0.9)
-            if "Prob_3d" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_3d"], alpha=0.9)
-            if "Prob_5d" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_5d"], alpha=0.9)
+            if "Prob_A" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_A"], alpha=0.9)
+            if "Prob_B" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_B"], alpha=0.9)
+            if "Prob_C" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_C"], alpha=0.9)
             ax2.axhline(0.5, linestyle="--", alpha=0.6)
             ax2.set_ylabel("Sannsynlighet")
 
-            plt.title(f"{sel}: Pris + sannsynlighet (1d/3d/5d)")
+            plt.title(f"{sel}: Pris + sannsynlighet (A/B/C)")
             st.pyplot(fig)
         except Exception as e:
             st.info(f"Kunne ikke vise graf for {sel}: {e}")
@@ -586,14 +582,14 @@ if run:
             import io
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                df1.to_excel(writer, index=False, sheet_name="1d")
-                df3.to_excel(writer, index=False, sheet_name="3d")
-                df5.to_excel(writer, index=False, sheet_name="5d")
+                df1.to_excel(writer, index=False, sheet_name=f"{H1}d")
+                df3.to_excel(writer, index=False, sheet_name=f"{H3}d")
+                df5.to_excel(writer, index=False, sheet_name=f"{H5}d")
                 cmp_df.to_excel(writer, index=False, sheet_name="Comparison")
             buf.seek(0)
             xls = buf.getvalue()
             st.download_button(
-                "⬇️ Last ned Excel (1d/3d/5d/Comparison)",
+                "⬇️ Last ned Excel (A/B/C/Comparison)",
                 data=xls,
                 file_name=f"scan_v6_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -628,7 +624,7 @@ if run:
     )
 
 else:
-    st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+    st.info("Velg/skriv tickere i sidepanelet, justér horisonter (1–30 dager) og trykk **🔎 Skann og sammenlign** for å starte.")
 
 
 
