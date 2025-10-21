@@ -182,11 +182,30 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 # ---- v6 label med nøytral-sone (eps) ----
 def make_label(df: pd.DataFrame, horizon: int, eps_frac: float) -> pd.Series:
-    eps = eps_frac / 100.0
-    close = df["Close"].astype(float)
-    fwd = close.shift(-horizon) / close - 1.0
-    arr = np.where(fwd > eps, 1.0, np.where(fwd < -eps, 0.0, np.nan))
-    return pd.Series(arr.astype("float64"), index=df.index, name=f"Target_{horizon}")
+    """
+    v6-label: 1 hvis fremtidig avkastning > eps, 0 hvis < -eps, ellers NaN (nøytral).
+    Gjør alt til ren 1D numpy for å unngå ValueError fra pandas.
+    """
+    eps = float(eps_frac) / 100.0
+    # Sørg for float-serie
+    close = pd.to_numeric(df["Close"], errors="coerce").astype(float)
+
+    # Fremtidig avkastning som 1D numpy
+    fwd_np = ((close.shift(-horizon) / close) - 1.0).to_numpy()
+
+    # Lag 1D mål-array (float64)
+    arr = np.where(fwd_np > eps, 1.0, np.where(fwd_np < -eps, 0.0, np.nan))
+    arr = np.asarray(arr, dtype="float64").ravel()
+
+    # Lengden må matche index – pad/trunc if needed (ekstra sikkerhet)
+    if len(arr) != len(df.index):
+        if len(arr) < len(df.index):
+            pad = np.full(len(df.index) - len(arr), np.nan, dtype="float64")
+            arr = np.concatenate([arr, pad])
+        else:
+            arr = arr[: len(df.index)]
+
+    return pd.Series(arr, index=df.index, name=f"Target_{horizon}")
 
 FEATURES_ALL = [
     "ret1","ret3","ret5","ma5","ma20","vol10","trend20","rsi14",
@@ -589,6 +608,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
