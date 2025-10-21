@@ -141,65 +141,58 @@ def fetch_history(ticker: str, start, end):
     return df
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Rask felles feature-pipe som kan gjenbrukes på tvers av horisonter."""
+    """Rask felles feature-pipe, robust uthenting av Close som 1D Series."""
     df = df.copy()
-    # robust uthenting av Close
-    close = None
-    if "Close" in df.columns:
-        close = df["Close"]
-    else:
-        cand = [c for c in df.columns if "close" in str(c).lower()]
-        if cand:
-            close = df[cand[0]]
-        else:
-            num = df.select_dtypes(include=[np.number])
-            if num.shape[1] > 0:
-                close = num.iloc[:, 0]
-            else:
-                # ingen numeriske -> returner tom df
-                return pd.DataFrame(index=df.index)
 
-    close = pd.to_numeric(close, errors="coerce").astype(float)
+    # Bruk robust hjelper (tåler manglende/dupliserte 'Close', MultiIndex, mm.)
+    close = _get_close_series(df).astype(float)
 
+    # Hvis vi fortsatt ikke har noe brukbart, returner tomt med riktig indeks
+    if close is None or close.size == 0:
+        return pd.DataFrame(index=df.index)
+
+    # --- Features ---
     ret1 = close.pct_change()
-    df["ret1"] = ret1
-    df["ret3"] = close.pct_change(3)
-    df["ret5"] = close.pct_change(5)
-    df["ma5"] = close.rolling(5).mean()
-    df["ma20"] = close.rolling(20).mean()
-    df["vol10"] = ret1.rolling(10).std()
-    df["trend20"] = (df["ma20"] - df["ma5"]) / df["ma20"]
+    out = pd.DataFrame(index=close.index)
+    out["ret1"]  = ret1
+    out["ret3"]  = close.pct_change(3)
+    out["ret5"]  = close.pct_change(5)
+    out["ma5"]   = close.rolling(5).mean()
+    out["ma20"]  = close.rolling(20).mean()
+    out["vol10"] = ret1.rolling(10).std()
+    out["trend20"] = (out["ma20"] - out["ma5"]) / out["ma20"]
 
     # RSI(14)
     delta = close.diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
-    df["rsi14"] = 100 - (100 / (1 + rs))
+    out["rsi14"] = 100 - (100 / (1 + rs))
 
-    # EMA, MACD, Bollinger%
-    df["ema20"] = close.ewm(span=20, adjust=False).mean()
-    df["ema50"] = close.ewm(span=50, adjust=False).mean()
-    df["ema_gap"] = (df["ema20"] - df["ema50"]) / df["ema50"]
+    # EMA / MACD
+    out["ema20"] = close.ewm(span=20, adjust=False).mean()
+    out["ema50"] = close.ewm(span=50, adjust=False).mean()
+    out["ema_gap"] = (out["ema20"] - out["ema50"]) / out["ema50"]
 
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
+    ema12  = close.ewm(span=12, adjust=False).mean()
+    ema26  = close.ewm(span=26, adjust=False).mean()
+    macd   = ema12 - ema26
     signal = macd.ewm(span=9, adjust=False).mean()
-    df["macd"] = macd
-    df["macd_sig"] = signal
-    df["macd_hist"] = macd - signal
+    out["macd"]      = macd
+    out["macd_sig"]  = signal
+    out["macd_hist"] = macd - signal
 
-    ma20 = close.rolling(20).mean()
+    # Bollinger
+    ma20  = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     upper = ma20 + 2 * std20
     lower = ma20 - 2 * std20
-    df["bb_pct"] = (close - lower) / (upper - lower)
-    df["bb_width"] = (upper - lower) / ma20
+    out["bb_pct"]   = (close - lower) / (upper - lower)
+    out["bb_width"] = (upper - lower) / ma20
 
-    # Behold original indeks (Close-indeks)
-    df.index = close.index
-    return df
+    # behold indeks (samme som close)
+    out.index = close.index
+    return out
 
 # ---------- ROBUST close-hjelper + label ----------
 def _get_close_series(df: pd.DataFrame) -> pd.Series:
@@ -636,6 +629,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
