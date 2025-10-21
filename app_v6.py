@@ -149,26 +149,20 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 def make_label(df: pd.DataFrame, horizon: int, eps_frac: float) -> pd.Series:
     """
     Label: 1 hvis fremtidig avkastning > +eps, 0 hvis < -eps, ellers NaN (nøytral).
-    eps_frac er gitt i prosent. Returnerer ALLTID en 1D pandas.Series med samme index som df.
+    eps_frac er prosent. Returnerer ALLTID en 1D Series med samme index som df.
     """
     eps = float(eps_frac) / 100.0
 
-    # Hent close som float-1D
     close = df["Close"].astype(float)
+    fwd = close.shift(-horizon) / close - 1.0        # framtidsavkastning
 
-    # Fremtidig avkastning over N dager
-    fwd = close.shift(-horizon) / close - 1.0
-
-    # Konverter til ren 1D numpy-array
+    # Tving til ren 1D numpy-array (noen miljøer kan gi (n,1))
     fwd_np = np.asarray(fwd, dtype="float64").reshape(-1)
 
-    # Ternær: 1 (opp) / 0 (ned) / NaN (nøytral sone)
+    # 1 (opp), 0 (ned), NaN (nøytral sone)
     arr = np.where(fwd_np > eps, 1.0, np.where(fwd_np < -eps, 0.0, np.nan))
-
-    # Sørg for 1D (igjen, for sikkerhets skyld)
     arr = np.asarray(arr, dtype="float64").reshape(-1)
 
-    # Lag Series med identisk index
     return pd.Series(arr, index=df.index, name=f"Target_{horizon}")
 
 FEATURES_ALL = [
@@ -177,28 +171,36 @@ FEATURES_ALL = [
 ]
 
 def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
-    """Expanding walk-forward. Returnér NaN når vi ikke kan trene."""
-    n = len(X)
-    # Hvis utilstrekkelig data eller NaN i y → stopp
-    if n < 120 or y.isna().sum() > 0:
-        return pd.Series(np.nan, index=X.index), np.nan, np.nan, np.nan
+    """
+    Expanding walk-forward CV + trening av endelig modell.
+    Dropp NaN i y (nøytral-sone) for trening/validering, men produser sannsynligheter
+    for HELE datasettet til slutt.
+    """
+    # Behold en kopi av full index for slutt-prognose
+    full_index = X.index
 
-    # Hvis kun én klasse totalt → stopp
-    if len(np.unique(y.dropna().astype(int))) < 2:
-        return pd.Series(np.nan, index=X.index), np.nan, np.nan, np.nan
+    # Kun rader med gyldig label brukes til trening/validering
+    mask = y.notna()
+    X_tr = X.loc[mask]
+    y_tr = y.loc[mask]
 
-    anchors = [int(n*0.60), int(n*0.70), int(n*0.80)]
-    probs = pd.Series(np.nan, index=X.index)
+    n = len(X_tr)
+    # Ikke nok data -> returner nøytral 0.5
+    if n < 120 or len(np.unique(y_tr.astype(int))) < 2:
+        return pd.Series(0.5, index=full_index), np.nan, np.nan, 0.5
+
+    anchors = [int(n * 0.60), int(n * 0.70), int(n * 0.80)]
+    # Vi samler valideringsproba for rader som faktisk brukes i CV
+    cv_probs = pd.Series(np.nan, index=X_tr.index)
     val_accs, val_aucs, thrs = [], [], []
 
     for a in anchors:
         tr0, tr1 = 0, a
-        va0, va1 = a, min(a + int(n*0.10), n-1)
-        Xtr, ytr = X.iloc[tr0:tr1], y.iloc[tr0:tr1]
-        Xva, yva = X.iloc[va0:va1], y.iloc[va0:va1]
+        va0, va1 = a, min(a + int(n * 0.10), n - 1)
 
-        # Må ha val-data og minst to klasser i trening
-        if len(Xva) == 0 or len(np.unique(ytr.dropna().astype(int))) < 2:
+        Xtr, ytr = X_tr.iloc[tr0:tr1], y_tr.iloc[tr0:tr1]
+        Xva, yva = X_tr.iloc[va0:va1], y_tr.iloc[va0:va1]
+        if len(Xva) == 0 or len(np.unique(ytr.astype(int))) < 2:
             continue
 
         scaler = RobustScaler().fit(Xtr)
@@ -210,30 +212,37 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
         clf.fit(Xtr_s, ytr.astype(int))
 
         p = clf.predict_proba(Xva_s)[:, 1]
-        probs.iloc[va0:va1] = p
+        cv_probs.loc[Xva.index] = p
 
+        # Finn beste cutoff for accuracy
         cand = np.linspace(0.3, 0.7, 41)
-        accs = [accuracy_score(yva.astype(int), (p >= t).astype(int)) for t in cand if not np.isnan(p).any()]
-        if len(accs):
-            t_star = float(cand[int(np.argmax(accs))])
-            thrs.append(t_star)
-            val_accs.append(max(accs))
-            try:
-                val_aucs.append(roc_auc_score(yva.astype(int), p))
-            except Exception:
-                pass
+        accs = [accuracy_score(yva.astype(int), (p >= t).astype(int)) for t in cand]
+        t_star = float(cand[int(np.argmax(accs))])
+        thrs.append(t_star)
 
-    # Tren endelig modell på hele datasettet
-    scaler = RobustScaler().fit(X)
-    Xs = scaler.transform(X)
+        val_accs.append(max(accs))
+        try:
+            val_aucs.append(roc_auc_score(yva.astype(int), p))
+        except Exception:
+            pass
+
+    # Tren endelig modell på all tilgjengelig treningsdata (uten NaN i y)
+    scaler_full = RobustScaler().fit(X_tr)
+    X_tr_s = scaler_full.transform(X_tr)
+
     base = GradientBoostingClassifier(random_state=0)
-    clf = CalibratedClassifierCV(base, method="isotonic", cv=3)
-    clf.fit(Xs, y.astype(int))
-    proba_full = pd.Series(clf.predict_proba(Xs)[:, 1], index=X.index)
+    clf_full = CalibratedClassifierCV(base, method="isotonic", cv=3)
+    clf_full.fit(X_tr_s, y_tr.astype(int))
+
+    # Prediker sannsynlighet for HELE datasettet (inkl. rader med nøytral y)
+    X_all_s = scaler_full.transform(X)
+    proba_full = clf_full.predict_proba(X_all_s)[:, 1]
+    proba_full = pd.Series(proba_full, index=full_index)
 
     acc = float(np.nanmean(val_accs)) if len(val_accs) else np.nan
     auc = float(np.nanmean(val_aucs)) if len(val_aucs) else np.nan
-    opt_thr = float(np.nanmean(thrs)) if len(thrs) else np.nan
+    opt_thr = float(np.nanmean(thrs)) if len(thrs) else 0.5
+
     return proba_full, acc, auc, opt_thr
 
 def _empty_result(idx=None):
@@ -520,6 +529,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
