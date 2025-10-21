@@ -147,12 +147,29 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 # ---- 1D label med nøytral sone (eps %) ----
 def make_label(df: pd.DataFrame, horizon: int, eps_frac: float) -> pd.Series:
-    eps = eps_frac / 100.0
+    """
+    Label: 1 hvis fremtidig avkastning > +eps, 0 hvis < -eps, ellers NaN (nøytral).
+    eps_frac er gitt i prosent. Returnerer ALLTID en 1D pandas.Series med samme index som df.
+    """
+    eps = float(eps_frac) / 100.0
+
+    # Hent close som float-1D
     close = df["Close"].astype(float)
+
+    # Fremtidig avkastning over N dager
     fwd = close.shift(-horizon) / close - 1.0
-    # 1, 0 eller NaN (nøytral)
-    arr = np.where(fwd > eps, 1, np.where(fwd < -eps, 0, np.nan))
-    return pd.Series(arr.astype("float64"), index=df.index, name=f"Target_{horizon}")
+
+    # Konverter til ren 1D numpy-array
+    fwd_np = np.asarray(fwd, dtype="float64").reshape(-1)
+
+    # Ternær: 1 (opp) / 0 (ned) / NaN (nøytral sone)
+    arr = np.where(fwd_np > eps, 1.0, np.where(fwd_np < -eps, 0.0, np.nan))
+
+    # Sørg for 1D (igjen, for sikkerhets skyld)
+    arr = np.asarray(arr, dtype="float64").reshape(-1)
+
+    # Lag Series med identisk index
+    return pd.Series(arr, index=df.index, name=f"Target_{horizon}")
 
 FEATURES_ALL = [
     "ret1","ret3","ret5","ma5","ma20","vol10","trend20","rsi14",
@@ -503,6 +520,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
