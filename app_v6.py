@@ -162,6 +162,15 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["bb_pct"] = (close - lower) / (upper - lower)
     df["bb_width"] = (upper - lower) / ma20
     return df
+    
+def clean_features(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """Rydd opp i features: fjern inf, fyll hull med ffill/bfill, og til slutt median."""
+    x = df[cols].copy()
+    x = x.replace([np.inf, -np.inf], np.nan)
+    x = x.fillna(method="ffill").fillna(method="bfill")
+    med = x.median(numeric_only=True)
+    x = x.fillna(med)
+    return x
 
 # ---- Enkel label: 1 hvis fwd > 0, ellers 0 (ingen nøytral) ----
 def make_label_hard(df: pd.DataFrame, horizon: int) -> pd.Series:
@@ -177,21 +186,24 @@ FEATURES_ALL = [
 ]
 
 def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
+    """Expanding walk-forward CV + endelig modell. Returner NaN når vi ikke kan beregne."""
     n = len(X)
-    if n < 120 or y.isna().sum() > 0:
-        return pd.Series([np.nan]*n, index=X.index), np.nan, np.nan, np.nan
+    # Viktig: ingen 0.5 her – bare NaN når vi ikke kan predikere
+    if n < 90 or y.isna().sum() > 0:
+        return pd.Series([np.nan] * n, index=X.index), np.nan, np.nan, np.nan
 
-    anchors = [int(n*0.60), int(n*0.70), int(n*0.80)]
+    anchors = [int(n * 0.60), int(n * 0.70), int(n * 0.80)]
     probs = pd.Series(np.nan, index=X.index)
     val_accs, val_aucs, thrs = [], [], []
 
     for a in anchors:
         tr0, tr1 = 0, a
-        va0, va1 = a, min(a + int(n*0.10), n-1)
+        va0, va1 = a, min(a + int(n * 0.10), n - 1)
         Xtr, ytr = X.iloc[tr0:tr1], y.iloc[tr0:tr1]
         Xva, yva = X.iloc[va0:va1], y.iloc[va0:va1]
 
-        if len(Xva)==0 or len(np.unique(ytr.dropna().astype(int))) < 2:
+        # trenger minst to klasser i trening og noe å validere på
+        if len(Xva) == 0 or len(np.unique(ytr.dropna().astype(int))) < 2:
             continue
 
         scaler = RobustScaler().fit(Xtr)
@@ -205,17 +217,18 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
         p = clf.predict_proba(Xva_s)[:, 1]
         probs.iloc[va0:va1] = p
 
+        # enkel cutoff-opt (maks accuracy)
         cand = np.linspace(0.3, 0.7, 41)
         accs = [accuracy_score(yva.astype(int), (p >= t).astype(int)) for t in cand]
         t_star = float(cand[int(np.argmax(accs))])
         thrs.append(t_star)
-
         val_accs.append(max(accs))
         try:
             val_aucs.append(roc_auc_score(yva.astype(int), p))
         except Exception:
             pass
 
+    # tren endelig modell for "dagens" sannsynligheter
     scaler = RobustScaler().fit(X)
     Xs = scaler.transform(X)
     base = GradientBoostingClassifier(random_state=0)
@@ -225,56 +238,58 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
 
     acc = float(np.nanmean(val_accs)) if len(val_accs) else np.nan
     auc = float(np.nanmean(val_aucs)) if len(val_aucs) else np.nan
-    opt_thr = float(np.nanmean(thrs)) if len(thrs) else np.nan
+    opt_thr = float(np.nanmean(thrs)) if len(thrs) else np.nan  # <- ikke 0.5
     return proba_full, acc, auc, opt_thr
 
 # ---- Robust analyse (ingen 50% fallback) ----
 def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float) -> dict:
     out = {}
     if df_raw is None or df_raw.empty or "Close" not in df_raw:
-        for key in ["1d","3d","5d"]:
+        for key in ["1d", "3d", "5d"]:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
                         "opt_thr": np.nan, "last_date": None}
         return out
 
     df = add_indicators(df_raw)
 
-    feat_base = [c for c in FEATURES_ALL if c in df.columns and df[c].notna().any()]
+    feat_base = [c for c in FEATURES_ALL if c in df.columns]
     if len(feat_base) == 0:
-        for key in ["1d","3d","5d"]:
+        for key in ["1d", "3d", "5d"]:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
                         "opt_thr": np.nan, "last_date": None}
         return out
 
-    for H, key in [(1,"1d"), (3,"3d"), (5,"5d")]:
+    MIN_LEN = 90  # litt snillere enn 120
+
+    for H, key in [(1, "1d"), (3, "3d"), (5, "5d")]:
+        # 1) lag label
         y = make_label_hard(df, H)
-        available = [c for c in feat_base if c in df.columns]
-        if not available:
-            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
-                        "opt_thr": np.nan, "last_date": None}
-            continue
 
-        pack = pd.concat([df[available], y], axis=1)
-        if y.name not in pack.columns:
-            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
-                        "opt_thr": np.nan, "last_date": None}
-            continue
+        # 2) rydd opp features (ikke dropp rader her)
+        X = clean_features(df, feat_base)
 
-        pack = pack.dropna()
-        if pack.empty or len(pack) < 120:
+        # 3) bygg "pack" kun for å vite siste dato / sortering
+        pack = pd.concat([X, y], axis=1)
+        pack = pack.replace([np.inf, -np.inf], np.nan)
+
+        # 4) dropp KUN rader uten label (hale pga shift)
+        pack = pack.dropna(subset=[y.name])
+        if pack.empty or len(pack) < MIN_LEN:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
                         "opt_thr": np.nan, "last_date": (pack.index[-1] if len(pack) else None)}
             continue
 
-        X = pack.loc[:, available]
+        # 5) trekk ut X/y etter rensing
+        Xv = pack[feat_base]
         yv = pack[y.name].astype(int)
 
+        # 6) må ha minst to klasser
         if len(np.unique(yv.values)) < 2:
             out[key] = {"proba": pd.Series(dtype=float, index=pack.index), "acc": np.nan,
                         "auc": np.nan, "opt_thr": np.nan, "last_date": pack.index[-1]}
             continue
 
-        proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
+        proba_full, acc, auc, opt_thr = walkforward_fit_predict(Xv, yv)
         out[key] = {"proba": proba_full, "acc": acc, "auc": auc,
                     "opt_thr": opt_thr, "last_date": pack.index[-1]}
 
@@ -519,6 +534,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
