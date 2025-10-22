@@ -1,6 +1,6 @@
 # app_v6.py
 # 📈 Aksjeanalyse – Pro v6 Dashboard
-# Multi-horisont (justerbar, default 1d / 3d / 5d) – side om side
+# Multi-horisont (A/B/C – default 1d / 3d / 5d) – side om side
 # Build: v6.2 – oktober 2025
 
 import streamlit as st
@@ -9,7 +9,7 @@ import numpy as np
 import yfinance as yf
 from datetime import datetime
 from sklearn.preprocessing import RobustScaler
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, roc_auc_score
 import matplotlib.pyplot as plt
@@ -27,9 +27,6 @@ st.markdown(
     <style>
     .main { background-color: #0E1117; }
     .stMarkdown, .stText, .stDataFrame { color: #E6E6E6 !important; }
-    .prob-1d { color:#16a34a; font-weight:600; }
-    .prob-3d { color:#3b82f6; font-weight:600; }
-    .prob-5d { color:#f97316; font-weight:600; }
     .rec-buy  { background: rgba(22,163,74,0.15); border:1px solid rgba(22,163,74,0.35); border-radius:12px; padding:6px 10px; }
     .rec-hold { background: rgba(148,163,184,0.10); border:1px solid rgba(148,163,184,0.25); border-radius:12px; padding:6px 10px; }
     .rec-sell { background: rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.35); border-radius:12px; padding:6px 10px; }
@@ -40,7 +37,7 @@ st.markdown(
 )
 
 st.title("📈 Aksjeanalyse – Pro v6 Dashboard")
-st.caption("Multi-horisont modell (justerbare horisonter) • Build: v6.2 – oktober 2025")
+st.caption("Multi-horisont modell (A/B/C – default 1/3/5 dager) • Build: v6.2 – oktober 2025")
 
 # -----------------------------
 # Presets
@@ -58,28 +55,9 @@ PRESETS = {
         "NESN.SW","NOVN.SW","ROG.SW","SAP.DE","SIE.DE","MBG.DE","ASML.AS","AD.AS","AIR.PA","OR.PA",
         "MC.PA","SAN.PA","ULVR.L","HSBA.L","SHEL.L","BP.L","BATS.L","RIO.L","AZN.L","GSK.L"
     ],
-    "DAX40 (utvalg)": [
-        "SAP.DE","SIE.DE","MBG.DE","DTE.DE","BMW.DE","ALV.DE","BAS.DE","MUV2.DE","BAYN.DE","VOW3.DE",
-        "IFX.DE","ADS.DE","HEI.DE","HEN3.DE","RWE.DE","LIN.DE","PUM.DE","FME.DE","ENR.DE","DB1.DE"
-    ],
-    "CAC40 (utvalg)": [
-        "OR.PA","MC.PA","AIR.PA","BNP.PA","SU.PA","ENGI.PA","GLE.PA","DG.PA","AI.PA","UG.PA",
-        "SAN.PA","ORA.PA","KER.PA","SGO.PA","CAP.PA","STLAP.PA","ACA.PA","RNO.PA","EDEN.PA","PUB.PA"
-    ],
-    "FTSE100 (utvalg)": [
-        "SHEL.L","BP.L","HSBA.L","AZN.L","ULVR.L","RIO.L","BATS.L","GSK.L","DGE.L","GLEN.L",
-        "VOD.L","LSEG.L","BARC.L","AV.L","NG.L","BA.L","AAL.L","PHNX.L","REL.L","BTI"
-    ],
-    "OMX30 (utvalg)": [
-        "VOLV-B.ST","ERIC-B.ST","SAND.ST","ATCO-A.ST","ATCO-B.ST","ESSITY-B.ST","SWED-A.ST","SEB-A.ST","ALFA.ST","TELIA.ST",
-        "ABB.ST","HEXA-B.ST","SKF-B.ST","BOL.ST","INVE-B.ST","EVO.ST","KINV-B.ST","NDA-SE.ST","MTG-B.ST","SCA-B.ST"
-    ],
     "Råvarer": ["CL=F","BZ=F","NG=F","GC=F","SI=F","HG=F","ZC=F","ZW=F","ZS=F"],
     "Valuta (Forex)": ["EURUSD=X","USDJPY=X","GBPUSD=X","AUDUSD=X","USDCAD=X","USDCHF=X","EURNOK=X","USDNOK=X","EURGBP=X"],
     "Krypto": ["BTC-USD","ETH-USD","SOL-USD","XRP-USD","ADA-USD"],
-    "USA – Teknologi": [
-        "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","AMD","CRM","ORCL","NFLX","NOW","INTU","PANW"
-    ]
 }
 
 # -----------------------------
@@ -104,14 +82,15 @@ col_d1, col_d2 = st.sidebar.columns(2)
 with col_d1:
     start_date = st.date_input("Startdato", pd.to_datetime("2019-01-01"))
 with col_d2:
-    end_date = st.date_input("Sluttdato", pd.Timestamp.today())
+    end_date   = st.date_input("Sluttdato", pd.Timestamp.today())
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Horisont (dager)")
-H1 = st.sidebar.slider("Horisont A (vises som '1 dag')", 1, 30, 1)
-H3 = st.sidebar.slider("Horisont B (vises som '3 dager')", 1, 30, 3)
-H5 = st.sidebar.slider("Horisont C (vises som '5 dager')", 1, 30, 5)
-HORIZONS = {"1d": H1, "3d": H3, "5d": H5}
+st.sidebar.subheader("Horisont (i dager)")
+H_A = int(st.sidebar.slider("Horisont A (vises som '1 dag')", 1, 30, 1))
+H_B = int(st.sidebar.slider("Horisont B (vises som '3 dager')", 1, 30, 3))
+H_C = int(st.sidebar.slider("Horisont C (vises som '5 dager')", 1, 30, 5))
+
+HORIZONS = [(H_A, "A"), (H_B, "B"), (H_C, "C")]  # interne navn
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Terskler for anbefaling")
@@ -124,22 +103,17 @@ def slider_pair(label_buy, label_sell, buy_default=0.60, sell_default=0.40):
 
 if same_thr:
     b_all, s_all = slider_pair("KJØP hvis sannsynlighet >", "SELG hvis sannsynlighet <", 0.60, 0.40)
-    thr = {"1d": (b_all, s_all), "3d": (b_all, s_all), "5d": (b_all, s_all)}
+    thr = {k: (b_all, s_all) for _, k in HORIZONS}
 else:
-    b1, s1 = slider_pair("Horisont A • KJØP >", "Horisont A • SELG <", 0.60, 0.40)
-    b3, s3 = slider_pair("Horisont B • KJØP >", "Horisont B • SELG <", 0.60, 0.40)
-    b5, s5 = slider_pair("Horisont C • KJØP >", "Horisont C • SELG <", 0.60, 0.40)
-    thr = {"1d": (b1, s1), "3d": (b3, s3), "5d": (b5, s5)}
+    bA, sA = slider_pair(f"{H_A}d • KJØP >", f"{H_A}d • SELG <", 0.60, 0.40)
+    bB, sB = slider_pair(f"{H_B}d • KJØP >", f"{H_B}d • SELG <", 0.60, 0.40)
+    bC, sC = slider_pair(f"{H_C}d • KJØP >", f"{H_C}d • SELG <", 0.60, 0.40)
+    thr = {"A": (bA, sA), "B": (bB, sB), "C": (bC, sC)}
 
 st.sidebar.markdown("---")
 want_excel = st.sidebar.checkbox("Eksporter Excel (flere ark)", value=True)
-eps = st.sidebar.number_input(
-    "Nøytral sone (eps, %)",
-    value=0.2, min_value=0.0, max_value=2.0, step=0.1,
-    help="Bevegelser med absolutt avkastning < eps% regnes som støy (ignoreres ved trening)."
-)
-debug = st.sidebar.checkbox("Vis enkel debug-info (for én ticker)", value=False)
-
+eps = st.sidebar.number_input("Støyfilter (eps, %)", value=0.20, min_value=0.0, max_value=2.0, step=0.1,
+                              help="Bevegelser med absolutt avkastning < eps% behandles som støy.")
 st.sidebar.caption("Tips: Norske aksjer bruker .OL (EQNR.OL). Valuta = '=X' (EURNOK=X). Råvarer: CL=F, GC=F.")
 
 # -----------------------------
@@ -150,11 +124,38 @@ def fetch_history(ticker: str, start, end):
     df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
     return df
 
+def get_close_series(df: pd.DataFrame) -> pd.Series:
+    """
+    Returner en 1D float-Serie for 'Close' uansett kolonnelayout (Single/MultiIndex).
+    Fallback: første numeriske kolonne. Tom serie om ingenting finnes.
+    """
+    try:
+        if "Close" in df.columns:
+            s = df["Close"]
+            if isinstance(s, pd.DataFrame):
+                s = s.iloc[:, 0]
+            return pd.to_numeric(s.squeeze(), errors="coerce").astype(float)
+
+        if isinstance(df.columns, pd.MultiIndex):
+            if "Close" in df.columns.get_level_values(-1):
+                s = df.xs("Close", axis=1, level=-1)
+                if isinstance(s, pd.DataFrame):
+                    s = s.iloc[:, 0]
+                return pd.to_numeric(s.squeeze(), errors="coerce").astype(float)
+    except Exception:
+        pass
+
+    num = df.select_dtypes(include=[np.number])
+    if not num.empty:
+        return pd.to_numeric(num.iloc[:, 0], errors="coerce").astype(float)
+
+    return pd.Series(np.nan, index=df.index, dtype=float)
+
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Felles feature-pipe som kan gjenbrukes på tvers av horisonter."""
+    """Rask felles feature-pipe som kan gjenbrukes på tvers av horisonter."""
     df = df.copy()
-    # sikre float
-    close = pd.to_numeric(df["Close"], errors="coerce").astype(float)
+    close = get_close_series(df)
+
     ret1 = close.pct_change()
     df["ret1"] = ret1
     df["ret3"] = close.pct_change(3)
@@ -171,7 +172,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     rs = gain / loss
     df["rsi14"] = 100 - (100 / (1 + rs))
 
-    # EMA/MACD/Bbands
+    # EMA / MACD / Bollinger
     df["ema20"] = close.ewm(span=20, adjust=False).mean()
     df["ema50"] = close.ewm(span=50, adjust=False).mean()
     df["ema_gap"] = (df["ema20"] - df["ema50"]) / df["ema50"]
@@ -193,17 +194,17 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+# ---- trygg label (1D) ----
 def make_label(df: pd.DataFrame, horizon: int, eps_frac: float) -> pd.Series:
     """
     Mål: retning over neste N dager. eps_frac i % -> brøk.
-    Returnerer 1 for opp (fwd > eps), 0 for ned (fwd < -eps), NaN for nøytral.
+    Returnerer alltid 1D Series.
     """
-    eps = eps_frac / 100.0
-    close = pd.to_numeric(df["Close"], errors="coerce").astype(float)
+    eps_b = float(eps_frac) / 100.0
+    close = get_close_series(df)
     fwd = close.shift(-horizon) / close - 1.0
-    # nøytral sone
-    arr = np.where(fwd > eps, 1, np.where(fwd < -eps, 0, np.nan))
-    return pd.Series(arr, index=df.index, name=f"Target_{horizon}")
+    arr = np.where(fwd > eps_b, 1, np.where(fwd < -eps_b, 0, np.nan))
+    return pd.Series(np.asarray(arr, dtype="float64").ravel(), index=df.index, name=f"Target_{horizon}")
 
 FEATURES_ALL = [
     "ret1","ret3","ret5","ma5","ma20","vol10","trend20","rsi14",
@@ -211,10 +212,7 @@ FEATURES_ALL = [
 ]
 
 def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
-    """
-    Expanding walk-forward CV for validering + tren endelig modell på hele datasettet.
-    Bruker balansert vekt, og kalibrerer sannsynligheter.
-    """
+    """Expanding walk-forward CV for validering + tren endelig modell på hele datasettet."""
     n = len(X)
     if n < 120 or y.isna().sum() > 0:
         return pd.Series([np.nan]*n, index=X.index), np.nan, np.nan, 0.5
@@ -226,19 +224,19 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
     for a in anchors:
         tr0, tr1 = 0, a
         va0, va1 = a, min(a + int(n*0.10), n-1)
+        if va1 <= va0:
+            continue
         Xtr, ytr = X.iloc[tr0:tr1], y.iloc[tr0:tr1]
         Xva, yva = X.iloc[va0:va1], y.iloc[va0:va1]
 
-        if len(Xva)==0:
-            continue
-        if len(np.unique(ytr.dropna().astype(int))) < 2:
+        if len(Xva)==0 or len(np.unique(ytr.dropna().astype(int))) < 2:
             continue
 
         scaler = RobustScaler().fit(Xtr)
         Xtr_s = scaler.transform(Xtr)
         Xva_s = scaler.transform(Xva)
 
-        base = HistGradientBoostingClassifier(random_state=0, class_weight="balanced")
+        base = GradientBoostingClassifier(random_state=0)
         clf = CalibratedClassifierCV(base, method="isotonic", cv=3)
         clf.fit(Xtr_s, ytr.astype(int))
 
@@ -259,26 +257,24 @@ def walkforward_fit_predict(X: pd.DataFrame, y: pd.Series):
     # Tren endelig modell på hele datasettet
     scaler = RobustScaler().fit(X)
     Xs = scaler.transform(X)
-    base = HistGradientBoostingClassifier(random_state=0, class_weight="balanced")
+    base = GradientBoostingClassifier(random_state=0)
     clf = CalibratedClassifierCV(base, method="isotonic", cv=3)
     clf.fit(Xs, y.astype(int))
-    proba_full = clf.predict_proba(Xs)[:, 1]
-    proba_full = pd.Series(proba_full, index=X.index)
+    proba_full = pd.Series(clf.predict_proba(Xs)[:, 1], index=X.index)
 
     acc = float(np.nanmean(val_accs)) if len(val_accs) else np.nan
     auc = float(np.nanmean(val_aucs)) if len(val_aucs) else np.nan
     opt_thr = float(np.nanmean(thrs)) if len(thrs) else 0.5
     return proba_full, acc, auc, opt_thr
 
-def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float, horizons: dict) -> dict:
+def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float, horizons: list[tuple[int,str]]) -> dict:
     """
-    Bygger indikatorer én gang og trener modeller for hver horisont.
-    ROBUST mot manglende/rare feature-kolonner på alle steg.
+    Bygger indikatorer én gang og trener modeller for alle 'horizons'.
+    horizons: liste av (antall_dager, key) – f.eks. [(1,"A"), (3,"B"), (5,"C")]
     """
     out = {}
-
-    if df_raw is None or df_raw.empty or "Close" not in df_raw:
-        for key in ["1d", "3d", "5d"]:
+    if df_raw is None or df_raw.empty:
+        for _, key in horizons:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
                         "opt_thr": 0.5, "last_date": None}
         return out
@@ -287,13 +283,12 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float, horizons: dict) -
 
     feat_base = [c for c in FEATURES_ALL if c in df.columns and df[c].notna().any()]
     if len(feat_base) == 0:
-        for key in ["1d", "3d", "5d"]:
+        for _, key in horizons:
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
                         "opt_thr": 0.5, "last_date": None}
         return out
 
-    for key, H in horizons.items():
-        # 3) Label med nøytral sone
+    for H, key in horizons:
         y = make_label(df, H, eps_pct)
         if y is None or len(y) != len(df):
             out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
@@ -306,46 +301,29 @@ def analyze_ticker_multi(df_raw: pd.DataFrame, eps_pct: float, horizons: dict) -
                         "opt_thr": 0.5, "last_date": None}
             continue
 
-        pack = pd.concat([df[available], y], axis=1)
-
-        cols_in_pack = [c for c in available if c in pack.columns]
-        if not cols_in_pack or y.name not in pack.columns:
-            out[key] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
-                        "opt_thr": 0.5, "last_date": None}
-            continue
-
-        pack = pack.dropna()
+        pack = pd.concat([df[available], y], axis=1).dropna()
         if pack.empty or len(pack) < 120:
+            # nøytral fallback
+            neut_index = pack.index if len(pack) else df.index
             out[key] = {
-                "proba": pd.Series(0.5, index=(pack.index if len(pack) else df.index), name="proba"),
-                "acc": np.nan,
-                "auc": np.nan,
-                "opt_thr": 0.5,
+                "proba": pd.Series(0.5, index=neut_index, name="proba"),
+                "acc": np.nan, "auc": np.nan, "opt_thr": 0.5,
                 "last_date": (pack.index[-1] if len(pack) else None),
             }
             continue
 
-        X  = pack.loc[:, cols_in_pack]
+        X  = pack.loc[:, available]
         yv = pack[y.name]
-
         if len(np.unique(yv.values.astype(int))) < 2:
             neut = pd.Series(0.5, index=pack.index, name="proba")
-            out[key] = {
-                "proba": neut,
-                "acc": np.nan,
-                "auc": np.nan,
-                "opt_thr": 0.5,
-                "last_date": pack.index[-1],
-            }
+            out[key] = {"proba": neut, "acc": np.nan, "auc": np.nan,
+                        "opt_thr": 0.5, "last_date": pack.index[-1]}
             continue
 
         proba_full, acc, auc, opt_thr = walkforward_fit_predict(X, yv)
         out[key] = {
-            "proba": proba_full,
-            "acc": acc,
-            "auc": auc,
-            "opt_thr": opt_thr,
-            "last_date": pack.index[-1],
+            "proba": proba_full, "acc": acc, "auc": auc,
+            "opt_thr": opt_thr, "last_date": pack.index[-1],
         }
 
     return out
@@ -381,16 +359,15 @@ if run:
         except Exception:
             df_raw = pd.DataFrame()
 
-        if df_raw is None or df_raw.empty or "Close" not in df_raw:
+        if df_raw is None or df_raw.empty:
             results.append({
                 "Ticker": t,
-                "Prob_1d": np.nan, "Rec_1d": "HOLD", "Date_1d": "—",
-                "Prob_3d": np.nan, "Rec_3d": "HOLD", "Date_3d": "—",
-                "Prob_5d": np.nan, "Rec_5d": "HOLD", "Date_5d": "—",
-                "Delta_5d_1d": np.nan,
-                "Acc": np.nan, "AUC": np.nan, "Composite": np.nan
+                f"Prob_{H_A}d": np.nan, f"Rec_{H_A}d": "HOLD", f"Date_{H_A}d": "—",
+                f"Prob_{H_B}d": np.nan, f"Rec_{H_B}d": "HOLD", f"Date_{H_B}d": "—",
+                f"Prob_{H_C}d": np.nan, f"Rec_{H_C}d": "HOLD", f"Date_{H_C}d": "—",
+                "Delta_C_A": np.nan, "Acc": np.nan, "AUC": np.nan, "Composite": np.nan
             })
-            progress.progress(i / len(tickers))
+            progress.progress(i/len(tickers))
             continue
 
         pack = analyze_ticker_multi(df_raw, eps_pct=eps, horizons=HORIZONS)
@@ -407,46 +384,33 @@ if run:
             except Exception:
                 return default
 
-        p1 = last_proba("1d")
-        p3 = last_proba("3d")
-        p5 = last_proba("5d")
+        pA = last_proba("A"); pB = last_proba("B"); pC = last_proba("C")
+        dateA = expected_date(pack["A"]["last_date"], H_A)
+        dateB = expected_date(pack["B"]["last_date"], H_B)
+        dateC = expected_date(pack["C"]["last_date"], H_C)
 
-        date1 = expected_date(pack["1d"]["last_date"], H1)
-        date3 = expected_date(pack["3d"]["last_date"], H3)
-        date5 = expected_date(pack["5d"]["last_date"], H5)
+        bA,sA = thr["A"]; bB,sB = thr["B"]; bC,sC = thr["C"]
+        rA = rec_from_prob(pA, max(bA, pack["A"]["opt_thr"]), sA)
+        rB = rec_from_prob(pB, max(bB, pack["B"]["opt_thr"]), sB)
+        rC = rec_from_prob(pC, max(bC, pack["C"]["opt_thr"]), sC)
 
-        b1, s1 = thr["1d"]
-        b3, s3 = thr["3d"]
-        b5, s5 = thr["5d"]
-
-        r1 = rec_from_prob(p1, max(b1, pack["1d"]["opt_thr"]), s1)
-        r3 = rec_from_prob(p3, max(b3, pack["3d"]["opt_thr"]), s3)
-        r5 = rec_from_prob(p5, max(b5, pack["5d"]["opt_thr"]), s5)
-
-        probs = [x for x in [p1,p3,p5] if not np.isnan(x)]
+        probs = [x for x in [pA,pB,pC] if not np.isnan(x)]
         comp = float(np.mean(probs)) if probs else np.nan
-        accs = [pack[k]["acc"] for k in ["1d","3d","5d"] if not np.isnan(pack[k]["acc"])]
-        aucs = [pack[k]["auc"] for k in ["1d","3d","5d"] if not np.isnan(pack[k]["auc"])]
+        accs = [pack[k]["acc"] for k in ["A","B","C"] if not np.isnan(pack[k]["acc"])]
+        aucs = [pack[k]["auc"] for k in ["A","B","C"] if not np.isnan(pack[k]["auc"])]
         acc = float(np.mean(accs)) if accs else np.nan
         auc = float(np.mean(aucs)) if aucs else np.nan
 
         results.append({
             "Ticker": t,
-            "Prob_1d": p1, "Rec_1d": r1, "Date_1d": date1,
-            "Prob_3d": p3, "Rec_3d": r3, "Date_3d": date3,
-            "Prob_5d": p5, "Rec_5d": r5, "Date_5d": date5,
-            "Delta_5d_1d": (p5 - p1) if (not np.isnan(p5) and not np.isnan(p1)) else np.nan,
+            f"Prob_{H_A}d": pA, f"Rec_{H_A}d": rA, f"Date_{H_A}d": dateA,
+            f"Prob_{H_B}d": pB, f"Rec_{H_B}d": rB, f"Date_{H_B}d": dateB,
+            f"Prob_{H_C}d": pC, f"Rec_{H_C}d": rC, f"Date_{H_C}d": dateC,
+            "Delta_C_A": (pC - pA) if (not np.isnan(pC) and not np.isnan(pA)) else np.nan,
             "Acc": acc, "AUC": auc, "Composite": comp
         })
 
-        if debug and i == 1:
-            st.write("🔎 Debug – features (head):")
-            try:
-                st.write(add_indicators(df_raw).head())
-            except Exception:
-                pass
-
-        progress.progress(i / len(tickers))
+        progress.progress(i/len(tickers))
 
     status.empty()
     progress.empty()
@@ -467,7 +431,11 @@ def style_df(df: pd.DataFrame, fmt_map: dict):
 # -----------------------------
 if run:
     df = pd.DataFrame(results)
-    num_cols = ["Prob_1d", "Prob_3d", "Prob_5d", "Acc", "AUC", "Delta_5d_1d", "Composite"]
+
+    num_cols = [
+        f"Prob_{H_A}d", f"Prob_{H_B}d", f"Prob_{H_C}d",
+        "Acc", "AUC", "Delta_C_A", "Composite"
+    ]
     for c in num_cols:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -475,51 +443,50 @@ if run:
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        st.subheader(f"🟩 {H1} dag(er) frem")
-        df1 = df[["Ticker", "Prob_1d", "Rec_1d", "Date_1d", "Acc"]].copy()
-        df1 = df1.sort_values("Prob_1d", ascending=False)
+        st.subheader(f"🟩 {H_A} dag{'er' if H_A>1 else ''} frem")
+        df1 = df[["Ticker", f"Prob_{H_A}d", f"Rec_{H_A}d", f"Date_{H_A}d", "Acc"]].copy()
+        df1 = df1.sort_values(f"Prob_{H_A}d", ascending=False)
         st.dataframe(
-            style_df(df1, {"Prob_1d": "{:.2%}", "Acc": "{:.2%}"}),
+            style_df(df1, {f"Prob_{H_A}d": "{:.2%}", "Acc": "{:.2%}"}),
             use_container_width=True
         )
 
     with c2:
-        st.subheader(f"🟦 {H3} dag(er) frem")
-        df3 = df[["Ticker", "Prob_3d", "Rec_3d", "Date_3d", "Acc"]].copy()
-        df3 = df3.sort_values("Prob_3d", ascending=False)
+        st.subheader(f"🟦 {H_B} dag{'er' if H_B>1 else ''} frem")
+        df3 = df[["Ticker", f"Prob_{H_B}d", f"Rec_{H_B}d", f"Date_{H_B}d", "Acc"]].copy()
+        df3 = df3.sort_values(f"Prob_{H_B}d", ascending=False)
         st.dataframe(
-            style_df(df3, {"Prob_3d": "{:.2%}", "Acc": "{:.2%}"}),
+            style_df(df3, {f"Prob_{H_B}d": "{:.2%}", "Acc": "{:.2%}"}),
             use_container_width=True
         )
 
     with c3:
-        st.subheader(f"🟧 {H5} dag(er) frem")
-        df5 = df[["Ticker", "Prob_5d", "Rec_5d", "Date_5d", "Acc", "Delta_5d_1d"]].copy()
-        df5 = df5.sort_values("Prob_5d", ascending=False)
+        st.subheader(f"🟧 {H_C} dag{'er' if H_C>1 else ''} frem")
+        df5 = df[["Ticker", f"Prob_{H_C}d", f"Rec_{H_C}d", f"Date_{H_C}d", "Acc", "Delta_C_A"]].copy()
+        df5 = df5.sort_values(f"Prob_{H_C}d", ascending=False)
         st.dataframe(
-            style_df(df5, {"Prob_5d": "{:.2%}", "Acc": "{:.2%}", "Delta_5d_1d": "{:.2%}"}),
+            style_df(df5, {f"Prob_{H_C}d": "{:.2%}", "Acc": "{:.2%}", "Delta_C_A": "{:.2%}"}),
             use_container_width=True
         )
 
     st.markdown("---")
     st.subheader("📋 Sammenligningstabell (alle horisonter)")
-
     cmp_df = df[[
         "Ticker",
-        "Prob_1d","Rec_1d","Date_1d",
-        "Prob_3d","Rec_3d","Date_3d",
-        "Prob_5d","Rec_5d","Date_5d",
-        "Delta_5d_1d","Acc","AUC","Composite"
+        f"Prob_{H_A}d", f"Rec_{H_A}d", f"Date_{H_A}d",
+        f"Prob_{H_B}d", f"Rec_{H_B}d", f"Date_{H_B}d",
+        f"Prob_{H_C}d", f"Rec_{H_C}d", f"Date_{H_C}d",
+        "Delta_C_A","Acc","AUC","Composite"
     ]].sort_values("Composite", ascending=False)
 
     st.dataframe(
         style_df(
             cmp_df,
             {
-                "Prob_1d": "{:.2%}",
-                "Prob_3d": "{:.2%}",
-                "Prob_5d": "{:.2%}",
-                "Delta_5d_1d": "{:.2%}",
+                f"Prob_{H_A}d": "{:.2%}",
+                f"Prob_{H_B}d": "{:.2%}",
+                f"Prob_{H_C}d": "{:.2%}",
+                "Delta_C_A": "{:.2%}",
                 "Acc": "{:.2%}",
                 "AUC": "{:.3f}",
                 "Composite": "{:.2%}",
@@ -539,11 +506,13 @@ if run:
         try:
             raw = fetch_history(sel, start=start_date, end=end_date)
             pack = analyze_ticker_multi(raw, eps_pct=eps, horizons=HORIZONS)
+            close = get_close_series(raw)
+
             plot_df = pd.DataFrame({
-                "Close": raw["Close"],
-                "Prob_A": pack["1d"]["proba"].reindex(raw.index),
-                "Prob_B": pack["3d"]["proba"].reindex(raw.index),
-                "Prob_C": pack["5d"]["proba"].reindex(raw.index),
+                "Close": close,
+                f"Prob_{H_A}d": pack["A"]["proba"].reindex(raw.index),
+                f"Prob_{H_B}d": pack["B"]["proba"].reindex(raw.index),
+                f"Prob_{H_C}d": pack["C"]["proba"].reindex(raw.index),
             }).dropna(subset=["Close"])
 
             fig, ax1 = plt.subplots(figsize=(10, 4))
@@ -552,13 +521,13 @@ if run:
             ax1.set_ylabel("Pris")
 
             ax2 = ax1.twinx()
-            if "Prob_A" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_A"], alpha=0.9)
-            if "Prob_B" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_B"], alpha=0.9)
-            if "Prob_C" in plot_df: ax2.plot(plot_df.index, plot_df["Prob_C"], alpha=0.9)
+            if f"Prob_{H_A}d" in plot_df: ax2.plot(plot_df.index, plot_df[f"Prob_{H_A}d"], alpha=0.9)
+            if f"Prob_{H_B}d" in plot_df: ax2.plot(plot_df.index, plot_df[f"Prob_{H_B}d"], alpha=0.9)
+            if f"Prob_{H_C}d" in plot_df: ax2.plot(plot_df.index, plot_df[f"Prob_{H_C}d"], alpha=0.9)
             ax2.axhline(0.5, linestyle="--", alpha=0.6)
             ax2.set_ylabel("Sannsynlighet")
 
-            plt.title(f"{sel}: Pris + sannsynlighet (A/B/C)")
+            plt.title(f"{sel}: Pris + sannsynlighet ({H_A}/{H_B}/{H_C} dager)")
             st.pyplot(fig)
         except Exception as e:
             st.info(f"Kunne ikke vise graf for {sel}: {e}")
@@ -569,6 +538,7 @@ if run:
     st.markdown("---")
     st.subheader("📤 Eksport")
 
+    # CSV
     csv_bytes = df.to_csv(index=False).encode("utf-8")
     st.download_button(
         "⬇️ Last ned CSV (alle horisonter)",
@@ -577,14 +547,15 @@ if run:
         mime="text/csv"
     )
 
+    # Excel (flere ark)
     if want_excel:
         try:
             import io
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                df1.to_excel(writer, index=False, sheet_name=f"{H1}d")
-                df3.to_excel(writer, index=False, sheet_name=f"{H3}d")
-                df5.to_excel(writer, index=False, sheet_name=f"{H5}d")
+                df1.to_excel(writer, index=False, sheet_name=f"{H_A}d")
+                df3.to_excel(writer, index=False, sheet_name=f"{H_B}d")
+                df5.to_excel(writer, index=False, sheet_name=f"{H_C}d")
                 cmp_df.to_excel(writer, index=False, sheet_name="Comparison")
             buf.seek(0)
             xls = buf.getvalue()
@@ -611,10 +582,10 @@ if run:
         style_df(
             st.session_state["history_v6"].tail(200),
             {
-                "Prob_1d": "{:.2%}",
-                "Prob_3d": "{:.2%}",
-                "Prob_5d": "{:.2%}",
-                "Delta_5d_1d": "{:.2%}",
+                f"Prob_{H_A}d": "{:.2%}",
+                f"Prob_{H_B}d": "{:.2%}",
+                f"Prob_{H_C}d": "{:.2%}",
+                "Delta_C_A": "{:.2%}",
                 "Acc": "{:.2%}",
                 "AUC": "{:.3f}",
                 "Composite": "{:.2%}",
@@ -624,17 +595,7 @@ if run:
     )
 
 else:
-    st.info("Velg/skriv tickere i sidepanelet, justér horisonter (1–30 dager) og trykk **🔎 Skann og sammenlign** for å starte.")
-
-
-
-
-
-
-
-
-
-
+    st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
 
 
 
