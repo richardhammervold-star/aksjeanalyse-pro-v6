@@ -123,7 +123,7 @@ st.sidebar.markdown("---")
 want_excel = st.sidebar.checkbox("Eksporter Excel (flere ark)", value=True)
 eps = st.sidebar.number_input(
     "Støyfilter (eps, %)",
-    value=0.20, min_value=0.0, max_value=100, step=0.10,
+    value=0.20, min_value=0.0, max_value=50.0, step=0.10,
     help="Bevegelser med absolutt avkastning < eps% behandles som støy (nøytral)."
 )
 st.sidebar.caption("Tips: Norske aksjer bruker .OL (EQNR.OL). Valuta = '=X' (EURNOK=X). Råvarer: CL=F, GC=F.")
@@ -579,6 +579,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet, justér horisonter og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
