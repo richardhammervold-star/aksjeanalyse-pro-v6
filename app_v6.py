@@ -1,71 +1,73 @@
 # app_v6.py
-# 📈 Aksjeanalyse – Pro v6 Dashboard
-# Multi-horisont (A/B/C – justerbare dager) med eget eps per horisont
-# Build: v6.3 – oktober 2025
+# 📈 Aksjeanalyse – Pro v6.4 Dashboard
+# - Handelsdager (BDay) i labels og datovisning
+# - EPS per horisont (0–50 %)
+# - Feature-valg per horisont A/B/C + bryter for "samme features for alle"
+# Build: v6.4 – oktober 2025
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime
+from pandas.tseries.offsets import BDay
+
 from sklearn.preprocessing import RobustScaler
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, roc_auc_score
+
 import matplotlib.pyplot as plt
 
 # -----------------------------
-# Sideoppsett + enkel styling
+# Sideoppsett + styling
 # -----------------------------
-st.set_page_config(
-    page_title="Aksjeanalyse – Pro v6 Dashboard",
-    layout="wide",
-)
+st.set_page_config(page_title="Aksjeanalyse – Pro v6.4", layout="wide")
 
 st.markdown(
     """
     <style>
     .main { background-color: #0E1117; }
     .stMarkdown, .stText, .stDataFrame { color: #E6E6E6 !important; }
-    .rec-buy  { background: rgba(22,163,74,0.15); border:1px solid rgba(22,163,74,0.35); border-radius:12px; padding:6px 10px; }
-    .rec-hold { background: rgba(148,163,184,0.10); border:1px solid rgba(148,163,184,0.25); border-radius:12px; padding:6px 10px; }
-    .rec-sell { background: rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.35); border-radius:12px; padding:6px 10px; }
     .soft-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius:16px; padding:12px 14px; }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-st.title("📈 Aksjeanalyse – Pro v6 Dashboard")
-st.caption("Justerbare horisonter (A/B/C) + eget støyfilter (eps) per horisont • Build: v6.3 – oktober 2025")
+st.title("📈 Aksjeanalyse – Pro v6.4")
+st.caption("Handelsdager (BDay) • EPS per horisont • Valgbare features per horisont (med «bruk samme» bryter)")
 
 # -----------------------------
-# Presets
+# Presets (kort)
 # -----------------------------
 PRESETS = {
-    "OBX (Norge)": [
-        "EQNR.OL","DNB.OL","MOWI.OL","NHY.OL","TEL.OL","ORK.OL","YAR.OL","KOG.OL","AKRBP.OL",
-        "TGS.OL","SUBC.OL","SALM.OL","AUTO.OL","ELK.OL","NOD.OL","PGS.OL","ADE.OL","BONHR.OL",
-        "OTELLO.OL","KID.OL","NRC.OL","VAR.OL","KIT.OL","SCHB.OL","AGS.OL","NEL.OL"
-    ],
-    "USA – Megacaps": [
-        "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","BRK-B","JPM","XOM","UNH","V","JNJ","WMT","PG","MA","AVGO","HD","MRK","PEP"
-    ],
-    "Europa – Blue chips": [
-        "NESN.SW","NOVN.SW","ROG.SW","SAP.DE","SIE.DE","MBG.DE","ASML.AS","AD.AS","AIR.PA","OR.PA",
-        "MC.PA","SAN.PA","ULVR.L","HSBA.L","SHEL.L","BP.L","BATS.L","RIO.L","AZN.L","GSK.L"
-    ],
-    "USA – Teknologi": [
-        "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","AMD","CRM","ORCL","NFLX","NOW","INTU","PANW"
-    ],
-    "OMX30 (utvalg)": [
-        "VOLV-B.ST","ERIC-B.ST","SAND.ST","ATCO-A.ST","ATCO-B.ST","ESSITY-B.ST","SWED-A.ST","SEB-A.ST","ALFA.ST","TELIA.ST",
-        "ABB.ST","HEXA-B.ST","SKF-B.ST","BOL.ST","INVE-B.ST","EVO.ST","KINV-B.ST","NDA-SE.ST","MTG-B.ST","SCA-B.ST"
-    ],
-    "Råvarer": ["CL=F","BZ=F","NG=F","GC=F","SI=F","HG=F","ZC=F","ZW=F","ZS=F"],
-    "Valuta (Forex)": ["EURUSD=X","USDJPY=X","GBPUSD=X","AUDUSD=X","USDCAD=X","USDCHF=X","EURNOK=X","USDNOK=X","EURGBP=X"],
-    "Krypto": ["BTC-USD","ETH-USD","SOL-USD","XRP-USD","ADA-USD"]
+    "OBX (Norge)": ["EQNR.OL","DNB.OL","MOWI.OL","NHY.OL","TEL.OL","ORK.OL","YAR.OL","KOG.OL","AKRBP.OL","TGS.OL"],
+    "USA – Megacaps": ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","BRK-B","JPM","XOM"]
 }
+
+# Alle mulige features (key = kolonne i datasettet)
+FEATURE_CHOICES = [
+    ("Retur 1 dag", "ret1"),
+    ("Retur 3 dager", "ret3"),
+    ("Retur 5 dager", "ret5"),
+    ("MA 5", "ma5"),
+    ("MA 20", "ma20"),
+    ("Volatilitet 10 (std)", "vol10"),
+    ("Trend 20 (MA20-MA5)/MA20", "trend20"),
+    ("RSI 14", "rsi14"),
+    ("EMA 20", "ema20"),
+    ("EMA 50", "ema50"),
+    ("EMA-gap (20-50)/50", "ema_gap"),
+    ("Bollinger %", "bb_pct"),
+    ("Bollinger bredde", "bb_width"),
+    ("MACD", "macd"),
+    ("MACD signal", "macd_sig"),
+    ("MACD histogram", "macd_hist"),
+]
+ALL_FEATURE_KEYS = [k for _, k in FEATURE_CHOICES]
+LABEL2KEY = dict(FEATURE_CHOICES)
+KEY2LABEL = {v: k for k, v in LABEL2KEY.items()}
 
 # -----------------------------
 # Sidebar – kontroller
@@ -76,275 +78,246 @@ preset = st.sidebar.selectbox("Hurtigvalg gruppe", list(PRESETS.keys()))
 if st.sidebar.button("📥 Last inn preset"):
     st.session_state["tickers"] = PRESETS[preset]
 
-default_tickers = ["AAPL","MSFT","NVDA","AMZN","EQNR.OL"]
+default_tickers = ["EQNR.OL","DNB.OL","MOWI.OL"]
 tickers = st.session_state.get("tickers", default_tickers)
 
-user_tickers = st.sidebar.text_area(
-    "Tickere (komma/linjer). Tomt felt = bruk valgt preset.",
-    value=", ".join(tickers), height=120
-)
+user_tickers = st.sidebar.text_area("Tickere (komma/linjer). Tomt = bruk preset.", value=", ".join(tickers), height=120)
 tickers = [t.strip().upper() for chunk in user_tickers.split("\n") for t in chunk.split(",") if t.strip()]
 
-# Dato
 col_d1, col_d2 = st.sidebar.columns(2)
 with col_d1:
-    start_date = st.sidebar.date_input("Startdato", pd.to_datetime("2019-01-01"))
+    start_date = st.date_input("Startdato", pd.to_datetime("2019-01-01"))
 with col_d2:
-    end_date = st.sidebar.date_input("Sluttdato", pd.Timestamp.today())
+    end_date = st.date_input("Sluttdato", pd.Timestamp.today())
 
 st.sidebar.markdown("---")
 
-# Justerbare horisonter (1–30 dager)
-st.sidebar.subheader("Horisont (antall dager)")
-H_A = int(st.sidebar.slider("Horisont A", 1, 30, 1, 1))
-H_B = int(st.sidebar.slider("Horisont B", 1, 30, 3, 1))
-H_C = int(st.sidebar.slider("Horisont C", 1, 30, 5, 1))
-HORIZONS = [("A", H_A), ("B", H_B), ("C", H_C)]  # (id, dager)
+# Horisonter (handelsdager)
+st.sidebar.subheader("Horisont (handelsdager)")
+dA = st.sidebar.slider("Horisont A", 1, 30, 3)
+dB = st.sidebar.slider("Horisont B", 1, 30, 7)
+dC = st.sidebar.slider("Horisont C", 1, 30, 14)
 
-st.sidebar.markdown("---")
+# EPS per horisont
+st.sidebar.subheader("Støyfilter (EPS, %)")
+epsA = st.sidebar.number_input("EPS_A (A-horisont)", value=0.20, min_value=0.0, max_value=50.0, step=0.10)
+epsB = st.sidebar.number_input("EPS_B (B-horisont)", value=0.30, min_value=0.0, max_value=50.0, step=0.10)
+epsC = st.sidebar.number_input("EPS_C (C-horisont)", value=0.50, min_value=0.0, max_value=50.0, step=0.10)
 
-# Eget støyfilter (eps, %) per horisont – med maks 50.0 %
-st.sidebar.subheader("Støyfilter (eps, %) per horisont")
-epsA = st.sidebar.number_input(
-    f"EPS for A ({H_A}d)", min_value=0.0, max_value=50.0, value=0.20, step=0.10,
-    help="Bevegelser < eps% regnes som støy (nøytral) for A."
-)
-epsB = st.sidebar.number_input(
-    f"EPS for B ({H_B}d)", min_value=0.0, max_value=50.0, value=0.20, step=0.10,
-    help="Bevegelser < eps% regnes som støy (nøytral) for B."
-)
-epsC = st.sidebar.number_input(
-    f"EPS for C ({H_C}d)", min_value=0.0, max_value=50.0, value=0.20, step=0.10,
-    help="Bevegelser < eps% regnes som støy (nøytral) for C."
-)
-eps_map = {"A": epsA, "B": epsB, "C": epsC}
-
-st.sidebar.markdown("---")
+# Terskler per/lik alle
 st.sidebar.subheader("Terskler for anbefaling")
 same_thr = st.sidebar.checkbox("Bruk samme terskler på alle horisonter", value=True)
-
 def slider_pair(label_buy, label_sell, buy_default=0.60, sell_default=0.40):
     b = st.sidebar.slider(label_buy, 0.50, 0.90, buy_default, 0.01)
     s = st.sidebar.slider(label_sell, 0.10, 0.50, sell_default, 0.01)
     return b, s
-
 if same_thr:
     b_all, s_all = slider_pair("KJØP hvis sannsynlighet >", "SELG hvis sannsynlighet <", 0.60, 0.40)
-    thr = {hid: (b_all, s_all) for hid, _ in HORIZONS}
+    thr = {"A": (b_all, s_all), "B": (b_all, s_all), "C": (b_all, s_all)}
 else:
-    thr = {}
-    for hid, days in HORIZONS:
-        b, s = slider_pair(f"{hid} ({days}d) • KJØP >", f"{hid} ({days}d) • SELG <", 0.60, 0.40)
-        thr[hid] = (b, s)
+    bA, sA = slider_pair(f"{dA} hd • KJØP >", f"{dA} hd • SELG <", 0.60, 0.40)
+    bB, sB = slider_pair(f"{dB} hd • KJØP >", f"{dB} hd • SELG <", 0.60, 0.40)
+    bC, sC = slider_pair(f"{dC} hd • KJØP >", f"{dC} hd • SELG <", 0.60, 0.40)
+    thr = {"A": (bA, sA), "B": (bB, sB), "C": (bC, sC)}
+
+st.sidebar.markdown("---")
+
+# Featurevalg: per horisont + bryter for samme for alle
+st.sidebar.subheader("Features (indikatorer)")
+
+use_same_feats = st.sidebar.checkbox("Bruk samme features for alle horisonter", value=True)
+
+def multiselect_features(label, default_keys):
+    default_labels = [KEY2LABEL[k] for k in default_keys]
+    selected_labels = st.sidebar.multiselect(label, [lab for lab, _k in FEATURE_CHOICES], default=default_labels)
+    # Map labels -> keys
+    return [LABEL2KEY[lab] for lab in selected_labels if lab in LABEL2KEY]
+
+if use_same_feats:
+    feats_all = multiselect_features("Velg features (gjelder A/B/C)", ALL_FEATURE_KEYS)
+    feats_map = {"A": feats_all, "B": feats_all, "C": feats_all}
+else:
+    feats_A = multiselect_features(f"Features for A ({dA} hd)", ALL_FEATURE_KEYS)
+    feats_B = multiselect_features(f"Features for B ({dB} hd)", ALL_FEATURE_KEYS)
+    feats_C = multiselect_features(f"Features for C ({dC} hd)", ALL_FEATURE_KEYS)
+    feats_map = {"A": feats_A, "B": feats_B, "C": feats_C}
 
 st.sidebar.markdown("---")
 want_excel = st.sidebar.checkbox("Eksporter Excel (flere ark)", value=True)
-
-st.sidebar.caption("Tips: Norske aksjer bruker .OL (EQNR.OL). Valuta = '=X' (EURNOK=X). Råvarer: CL=F, GC=F.")
+st.sidebar.caption("«hd» = handelsdager (BDay). EPS = minimumsbevegelse som ikke regnes som støy.")
 
 # -----------------------------
-# Datahjelpere (med caching)
+# Datahjelpere (cache)
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def fetch_history(ticker: str, start, end):
     return yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
 
-def get_close_series(df: pd.DataFrame) -> pd.Series:
-    """
-    Returner en 1-D Series med Close (eller Adj Close) uansett om
-    df har vanlige kolonner eller MultiIndex. Tom Series hvis ikke mulig.
-    """
-    if df is None or df.empty:
-        return pd.Series(dtype=float)
-
-    for name in ["Close", "Adj Close"]:
-        if name in df.columns:
-            s = df[name]
-            if isinstance(s, pd.DataFrame):
-                s = s.iloc[:, 0]
-            return pd.to_numeric(s.squeeze(), errors="coerce")
-
-    if isinstance(df.columns, pd.MultiIndex):
-        level0 = df.columns.get_level_values(0)
-        for name in ["Close", "Adj Close"]:
-            if name in level0:
-                s = df[name]
-                if isinstance(s, pd.DataFrame):
-                    s = s.iloc[:, 0]
-                return pd.to_numeric(s.squeeze(), errors="coerce")
-
-    return pd.Series(dtype=float, index=df.index)
-
 # -----------------------------
-# Indikatorer + labels
+# Indikatorer
 # -----------------------------
-FEATURES_ALL = [
-    "ret1","ret3","ret5","ma5","ma20","vol10","trend20","rsi14",
-    "ema20","ema50","ema_gap","bb_pct","bb_width","macd","macd_sig","macd_hist"
-]
-
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Sikker feature-pipe som tåler MultiIndex og rare datasett."""
-    close = get_close_series(df)
-    if close.empty:
-        return pd.DataFrame(index=df.index)
+    if df is None or df.empty or "Close" not in df:
+        return pd.DataFrame()
 
-    out = pd.DataFrame(index=close.index)
+    out = df.copy()
+    close = pd.to_numeric(out["Close"], errors="coerce").astype(float)
 
-    # Basale features
-    out["ret1"]  = close.pct_change()
-    out["ret3"]  = close.pct_change(3)
-    out["ret5"]  = close.pct_change(5)
-    out["ma5"]   = close.rolling(5).mean()
-    out["ma20"]  = close.rolling(20).mean()
-    out["vol10"] = close.pct_change().rolling(10).std()
+    ret1 = close.pct_change()
+    out["ret1"] = ret1
+    out["ret3"] = close.pct_change(3)
+    out["ret5"] = close.pct_change(5)
+    out["ma5"] = close.rolling(5).mean()
+    out["ma20"] = close.rolling(20).mean()
+    out["vol10"] = ret1.rolling(10).std()
     out["trend20"] = (out["ma20"] - out["ma5"]) / out["ma20"]
 
     # RSI(14)
-    delta    = close.diff()
-    gain     = delta.where(delta > 0, 0.0)
-    loss     = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-    rs       = avg_gain / avg_loss
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
     out["rsi14"] = 100 - (100 / (1 + rs))
 
-    # EMA og MACD og Bollinger%
+    # EMA/MACD
     out["ema20"] = close.ewm(span=20, adjust=False).mean()
     out["ema50"] = close.ewm(span=50, adjust=False).mean()
     out["ema_gap"] = (out["ema20"] - out["ema50"]) / out["ema50"]
 
     ema12 = close.ewm(span=12, adjust=False).mean()
     ema26 = close.ewm(span=26, adjust=False).mean()
-    macd  = ema12 - ema26
+    macd = ema12 - ema26
     signal = macd.ewm(span=9, adjust=False).mean()
-    out["macd"]     = macd
+    out["macd"] = macd
     out["macd_sig"] = signal
     out["macd_hist"] = macd - signal
 
+    # Bollinger
     ma20 = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     upper = ma20 + 2 * std20
     lower = ma20 - 2 * std20
-    out["bb_pct"]   = (close - lower) / (upper - lower)
+    out["bb_pct"] = (close - lower) / (upper - lower)
     out["bb_width"] = (upper - lower) / ma20
 
-    out = out.replace([np.inf, -np.inf], np.nan)
-    out = out.fillna(method="ffill").fillna(method="bfill")
     return out
 
-def make_label(close_series: pd.Series, horizon: int, eps_frac: float) -> pd.Series:
-    """Binary label: 1 hvis fwd > eps, 0 hvis fwd < -eps, ellers NaN (støy/nøytral)."""
-    eps = eps_frac / 100.0
-    close = pd.to_numeric(close_series, errors="coerce")
-    fwd = close.shift(-horizon) / close - 1.0
-    arr = np.where(fwd > eps, 1, np.where(fwd < -eps, 0, np.nan))
-    return pd.Series(arr.astype("float64"), index=close.index, name=f"Target_{horizon}")
+# -----------------------------
+# Labels (BDay)
+# -----------------------------
+def make_label_eps(df: pd.DataFrame, horizon_days: int, eps_pct: float) -> pd.Series:
+    if df is None or df.empty or "Close" not in df:
+        return pd.Series(dtype=float)
+
+    close = pd.to_numeric(df["Close"], errors="coerce").astype(float)
+
+    # Fremtidig pris etter 'horizon_days' handelsdager:
+    fut_idx = close.index + BDay(int(horizon_days))
+    fut = pd.Series(close.values, index=fut_idx).reindex(close.index)
+
+    fwd_ret = fut / close - 1.0
+    eps = eps_pct / 100.0
+
+    arr = np.where(fwd_ret > eps, 1, np.where(fwd_ret < -eps, 0, np.nan))
+    return pd.Series(arr.astype("float64"), index=df.index, name=f"Target_{horizon_days}")
 
 # -----------------------------
-# Modellering (robust)
+# Modellering
 # -----------------------------
-def fit_predict_single_horizon(df_raw: pd.DataFrame, horizon: int, eps_pct: float):
+def fit_predict_single_horizon(df_raw: pd.DataFrame, horizon_days: int, eps_pct: float, use_features: list[str]):
     """
-    Enkeltløp: bygg features, lag labels, tren kalibrert GBDT og gi sannsynlighet (hele historikken).
-    Robust mot lite/rare data – gir nøytral 0.5 hvis det ikke går.
+    Trener en kalibrert GBDT på valgte features.
+    - use_features: liste av featurenøkler (må matche kolonner fra add_indicators)
     """
+    out = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan, "opt_thr": 0.5, "last_date": None}
+    if df_raw is None or df_raw.empty or "Close" not in df_raw:
+        return out
+
     feats = add_indicators(df_raw)
     if feats.empty:
-        return pd.Series(dtype=float), np.nan, np.nan, 0.5, None
+        return out
 
-    close = get_close_series(df_raw)
-    y = make_label(close, horizon, eps_pct)
+    # Hvilke features skal brukes (kryss med det som finnes)
+    chosen = [f for f in (use_features or []) if f in feats.columns and feats[f].notna().any()]
+    if not chosen:  # ingen gyldige features valgt
+        out["proba"] = pd.Series(0.5, index=feats.index, name="proba")
+        out["last_date"] = feats.index[-1] if len(feats) else None
+        return out
 
-    cols = [c for c in FEATURES_ALL if c in feats.columns and feats[c].notna().any()]
-    if not cols or y.isna().all():
-        return pd.Series(dtype=float), np.nan, np.nan, 0.5, None
-
-    pack = pd.concat([feats[cols], y], axis=1).dropna()
+    y = make_label_eps(feats, horizon_days, eps_pct)
+    pack = pd.concat([feats[chosen], y], axis=1).dropna()
     if pack.empty or len(pack) < 120:
-        neut = pd.Series(0.5, index=(pack.index if len(pack) else feats.index), name="proba")
-        last_idx = (pack.index[-1] if len(pack) else (feats.index[-1] if len(feats) else None))
-        return neut, np.nan, np.nan, 0.5, last_idx
+        out["proba"] = pd.Series(0.5, index=feats.index, name="proba")
+        out["last_date"] = feats.index[-1] if len(feats) else None
+        return out
 
-    X = pack[cols]
-    yv = pack[y.name].astype(int)
+    X = pack[chosen].copy()
+    yv = pack[y.name].astype(int).copy()
 
-    # Krever to klasser for å trene
-    if len(np.unique(yv.values)) < 2:
-        neut = pd.Series(0.5, index=pack.index, name="proba")
-        return neut, np.nan, np.nan, 0.5, pack.index[-1]
+    if len(np.unique(yv)) < 2:
+        out["proba"] = pd.Series(0.5, index=feats.index, name="proba")
+        out["last_date"] = pack.index[-1]
+        return out
 
-    # Enkel validering: siste 10% som "val"
+    # holdout: siste 10%
     n = len(X)
-    split = max(int(n * 0.90), min(300, n - 1))
-    Xtr, Xva = X.iloc[:split], X.iloc[split:]
-    ytr, yva = yv.iloc[:split], yv.iloc[split:]
+    split = max(int(n*0.9), n-20)
+    Xtr, Xte = X.iloc[:split], X.iloc[split:]
+    ytr, yte = yv.iloc[:split], yv.iloc[split:]
 
     scaler = RobustScaler().fit(Xtr)
     Xtr_s = scaler.transform(Xtr)
-    Xva_s = scaler.transform(Xva)
+    Xte_s = scaler.transform(Xte)
 
     base = GradientBoostingClassifier(random_state=0)
     clf = CalibratedClassifierCV(base, method="isotonic", cv=3)
     clf.fit(Xtr_s, ytr)
 
-    pva = clf.predict_proba(Xva_s)[:, 1]
+    pte = clf.predict_proba(Xte_s)[:, 1]
     try:
-        acc = accuracy_score(yva, (pva >= 0.5).astype(int))
-        auc = roc_auc_score(yva, pva) if len(np.unique(yva)) == 2 else np.nan
+        acc = accuracy_score(yte, (pte >= 0.5).astype(int))
+        auc = roc_auc_score(yte, pte)
     except Exception:
         acc, auc = np.nan, np.nan
 
-    # Tren på hele samplet for full serie
-    scaler = RobustScaler().fit(X)
-    Xs = scaler.transform(X)
-    clf_full = CalibratedClassifierCV(GradientBoostingClassifier(random_state=0), method="isotonic", cv=3)
-    clf_full.fit(Xs, yv)
-    proba_full = pd.Series(clf_full.predict_proba(Xs)[:, 1], index=X.index, name="proba")
+    # tren på hele settet for full proba
+    scaler_full = RobustScaler().fit(X)
+    Xs_full = scaler_full.transform(X)
+    clf_full = CalibratedClassifierCV(GradientBoostingClassifier(random_state=0), method="isotonic", cv=3).fit(Xs_full, yv)
+    proba_full = pd.Series(clf_full.predict_proba(Xs_full)[:, 1], index=pack.index).reindex(feats.index).fillna(method="ffill")
 
-    # Enkel cut-off-optimalisering på val (om mulig)
-    opt_thr = 0.5
-    if len(Xva):
-        cand = np.linspace(0.3, 0.7, 41)
-        try:
-            accs = [accuracy_score(yva, (pva >= t).astype(int)) for t in cand]
-            opt_thr = float(cand[int(np.argmax(accs))])
-        except Exception:
-            pass
-
-    return proba_full, float(acc) if acc==acc else np.nan, float(auc) if auc==auc else np.nan, float(opt_thr), pack.index[-1]
-
-def analyze_ticker_multi(df_raw: pd.DataFrame, eps_by: dict, horizons: list[tuple[str,int]]):
-    """
-    Kjør tre justerbare horisonter (id, dager) og returner et pack per horisont-id.
-    eps_by er et dict med eps per horisont-id, f.eks. {"A": 0.2, "B": 0.2, "C": 0.2}
-    """
-    out = {}
-    if df_raw is None or df_raw.empty:
-        for hid, days in horizons:
-            out[hid] = {"proba": pd.Series(dtype=float), "acc": np.nan, "auc": np.nan,
-                        "opt_thr": 0.5, "last_date": None, "days": days, "eps": float(eps_by.get(hid, 0.0))}
-        return out
-
-    for hid, days in horizons:
-        eps_here = float(eps_by.get(hid, 0.0))
-        p, acc, auc, opt_thr, last_idx = fit_predict_single_horizon(df_raw, days, eps_here)
-        out[hid] = {"proba": p, "acc": acc, "auc": auc, "opt_thr": opt_thr, "last_date": last_idx, "days": days, "eps": eps_here}
+    out.update({"proba": proba_full, "acc": float(acc) if acc==acc else np.nan,
+                "auc": float(auc) if auc==auc else np.nan, "opt_thr": 0.5, "last_date": pack.index[-1]})
     return out
 
+def analyze_ticker_multi(df_raw: pd.DataFrame, horizons: dict, eps_dict: dict, feats_map: dict) -> dict:
+    out = {}
+    for key in ["A", "B", "C"]:
+        out[key] = fit_predict_single_horizon(
+            df_raw, horizons[key], eps_dict[key], feats_map.get(key, ALL_FEATURE_KEYS)
+        )
+    return out
+
+# -----------------------------
+# Utils
+# -----------------------------
 def rec_from_prob(prob: float, buy_thr: float, sell_thr: float) -> str:
-    if np.isnan(prob):
-        return "HOLD"
-    if prob > buy_thr:
-        return "BUY"
-    if prob < sell_thr:
-        return "SELL"
+    if np.isnan(prob): return "HOLD"
+    if prob > buy_thr: return "BUY"
+    if prob < sell_thr: return "SELL"
     return "HOLD"
 
 def expected_date(last_date: pd.Timestamp, horizon_days: int) -> str:
-    if last_date is None or pd.isna(last_date):
-        return "—"
-    return (pd.to_datetime(last_date) + pd.Timedelta(days=horizon_days)).strftime("%Y-%m-%d")
+    if last_date is None or pd.isna(last_date): return "—"
+    return (pd.to_datetime(last_date) + BDay(int(horizon_days))).strftime("%Y-%m-%d")
+
+def style_df(df: pd.DataFrame, fmt_map: dict):
+    styler = df.style.format(fmt_map)
+    try: styler = styler.hide_index()
+    except Exception:
+        try: styler = styler.hide(axis="index")
+        except Exception: pass
+    return styler
 
 # -----------------------------
 # Kjør skann
@@ -356,6 +329,9 @@ if run:
     progress = st.progress(0)
     status = st.empty()
 
+    HORIZONS = {"A": dA, "B": dB, "C": dC}
+    EPS = {"A": epsA, "B": epsB, "C": epsC}
+
     for i, t in enumerate(tickers, start=1):
         status.write(f"Henter og analyserer: {t}  ({i}/{len(tickers)})")
         try:
@@ -363,45 +339,48 @@ if run:
         except Exception:
             df_raw = pd.DataFrame()
 
-        pack = analyze_ticker_multi(df_raw, eps_by=eps_map, horizons=HORIZONS)
+        if df_raw is None or df_raw.empty or "Close" not in df_raw:
+            results.append({
+                "Ticker": t,
+                "Prob_A": np.nan, "Rec_A": "HOLD", "Date_A": "—", "EPS_A(%)": EPS["A"],
+                "Prob_B": np.nan, "Rec_B": "HOLD", "Date_B": "—", "EPS_B(%)": EPS["B"],
+                "Prob_C": np.nan, "Rec_C": "HOLD", "Date_C": "—", "EPS_C(%)": EPS["C"],
+                "Acc": np.nan, "AUC": np.nan, "Composite": np.nan
+            })
+            progress.progress(i/len(tickers))
+            continue
 
-        def last_proba(hid, default=np.nan):
-            try:
-                s = pack[hid]["proba"]
-                if len(s) == 0:
-                    return default
-                v = float(s.iloc[-1])
-                return v if not np.isnan(v) else default
-            except Exception:
-                return default
+        pack = analyze_ticker_multi(df_raw, HORIZONS, EPS, feats_map)
 
-        # A/B/C
-        pA, dA = last_proba("A"), pack["A"]["days"]
-        pB, dB = last_proba("B"), pack["B"]["days"]
-        pC, dC = last_proba("C"), pack["C"]["days"]
+        def last_proba(key, default=0.5):
+            s = pack[key]["proba"]
+            if s is None or len(s)==0: return default
+            v = float(s.iloc[-1])
+            return v if not np.isnan(v) else default
 
-        dateA = expected_date(pack["A"]["last_date"], dA)
-        dateB = expected_date(pack["B"]["last_date"], dB)
-        dateC = expected_date(pack["C"]["last_date"], dC)
+        pA, pB, pC = last_proba("A"), last_proba("B"), last_proba("C")
+        dateA = expected_date(pack["A"]["last_date"], HORIZONS["A"])
+        dateB = expected_date(pack["B"]["last_date"], HORIZONS["B"])
+        dateC = expected_date(pack["C"]["last_date"], HORIZONS["C"])
 
         bA,sA = thr["A"]; bB,sB = thr["B"]; bC,sC = thr["C"]
         rA = rec_from_prob(pA, max(bA, pack["A"]["opt_thr"]), sA)
         rB = rec_from_prob(pB, max(bB, pack["B"]["opt_thr"]), sB)
         rC = rec_from_prob(pC, max(bC, pack["C"]["opt_thr"]), sC)
 
-        # Agg-mål (enkle)
         probs = [x for x in [pA, pB, pC] if not np.isnan(x)]
         comp = float(np.mean(probs)) if probs else np.nan
-        accs = [pack[h]["acc"] for h in ["A","B","C"] if not np.isnan(pack[h]["acc"])]
-        aucs = [pack[h]["auc"] for h in ["A","B","C"] if not np.isnan(pack[h]["auc"])]
+
+        accs = [pack[k]["acc"] for k in ["A","B","C"] if not np.isnan(pack[k]["acc"])]
+        aucs = [pack[k]["auc"] for k in ["A","B","C"] if not np.isnan(pack[k]["auc"])]
         acc = float(np.mean(accs)) if accs else np.nan
         auc = float(np.mean(aucs)) if aucs else np.nan
 
         results.append({
             "Ticker": t,
-            f"Prob_{dA}d": pA, f"Rec_{dA}d": rA, f"Date_{dA}d": dateA, f"EPS_{dA}d(%)": pack["A"]["eps"],
-            f"Prob_{dB}d": pB, f"Rec_{dB}d": rB, f"Date_{dB}d": dateB, f"EPS_{dB}d(%)": pack["B"]["eps"],
-            f"Prob_{dC}d": pC, f"Rec_{dC}d": rC, f"Date_{dC}d": dateC, f"EPS_{dC}d(%)": pack["C"]["eps"],
+            "Prob_A": pA, "Rec_A": rA, "Date_A": dateA, "EPS_A(%)": EPS["A"],
+            "Prob_B": pB, "Rec_B": rB, "Date_B": dateB, "EPS_B(%)": EPS["B"],
+            "Prob_C": pC, "Rec_C": rC, "Date_C": dateC, "EPS_C(%)": EPS["C"],
             "Acc": acc, "AUC": auc, "Composite": comp
         })
 
@@ -410,147 +389,108 @@ if run:
     status.empty()
     progress.empty()
 
-def style_df(df: pd.DataFrame, fmt_map: dict):
-    styler = df.style.format(fmt_map)
-    try:
-        styler = styler.hide_index()
-    except Exception:
-        try:
-            styler = styler.hide(axis="index")
-        except Exception:
-            pass
-    return styler
-
 # -----------------------------
-# Visning – tre kolonner
+# Visning
 # -----------------------------
 if run:
     df = pd.DataFrame(results)
 
-    # Dagens valg
-    daysA, daysB, daysC = H_A, H_B, H_C
-
-    # Sikre numerikk
-    for c in df.columns:
-        if c.startswith("Prob_") or c in ["Acc","AUC","Composite"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
+    for c in ["Prob_A","Prob_B","Prob_C","Acc","AUC","Composite"]:
+        if c in df: df[c] = pd.to_numeric(df[c], errors="coerce")
 
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        st.subheader(f"🟩 {daysA} dag(er) frem")
-        colsA = ["Ticker", f"Prob_{daysA}d", f"Rec_{daysA}d", f"Date_{daysA}d", f"EPS_{daysA}d(%)", "Acc"]
-        dfA = df[colsA].copy()
-        dfA = dfA.sort_values(f"Prob_{daysA}d", ascending=False, na_position="last")
-        st.dataframe(style_df(dfA, {f"Prob_{daysA}d":"{:.2%}", "Acc":"{:.2%}", f"EPS_{daysA}d(%)":"{:.2f}"}), use_container_width=True)
+        st.subheader(f"🟩 {dA} handelsdager frem")
+        dfa = df[["Ticker","Prob_A","Rec_A","Date_A","EPS_A(%)","Acc"]].copy()
+        dfa = dfa.sort_values("Prob_A", ascending=False)
+        st.dataframe(style_df(dfa, {"Prob_A":"{:.2%}","Acc":"{:.2%}","EPS_A(%)":"{:.2f}"}), use_container_width=True)
 
     with c2:
-        st.subheader(f"🟦 {daysB} dag(er) frem")
-        colsB = ["Ticker", f"Prob_{daysB}d", f"Rec_{daysB}d", f"Date_{daysB}d", f"EPS_{daysB}d(%)", "Acc"]
-        dfB = df[colsB].copy()
-        dfB = dfB.sort_values(f"Prob_{daysB}d", ascending=False, na_position="last")
-        st.dataframe(style_df(dfB, {f"Prob_{daysB}d":"{:.2%}", "Acc":"{:.2%}", f"EPS_{daysB}d(%)":"{:.2f}"}), use_container_width=True)
+        st.subheader(f"🟦 {dB} handelsdager frem")
+        dfb = df[["Ticker","Prob_B","Rec_B","Date_B","EPS_B(%)","Acc"]].copy()
+        dfb = dfb.sort_values("Prob_B", ascending=False)
+        st.dataframe(style_df(dfb, {"Prob_B":"{:.2%}","Acc":"{:.2%}","EPS_B(%)":"{:.2f}"}), use_container_width=True)
 
     with c3:
-        st.subheader(f"🟧 {daysC} dag(er) frem")
-        colsC = ["Ticker", f"Prob_{daysC}d", f"Rec_{daysC}d", f"Date_{daysC}d", f"EPS_{daysC}d(%)", "Acc", "Composite"]
-        dfC = df[colsC].copy()
-        dfC = dfC.sort_values(f"Prob_{daysC}d", ascending=False, na_position="last")
-        st.dataframe(style_df(dfC, {f"Prob_{daysC}d":"{:.2%}", "Acc":"{:.2%}", "Composite":"{:.2%}", f"EPS_{daysC}d(%)":"{:.2f}"}), use_container_width=True)
+        st.subheader(f"🟧 {dC} handelsdager frem")
+        dfc = df[["Ticker","Prob_C","Rec_C","Date_C","EPS_C(%)","Acc"]].copy()
+        dfc = dfc.sort_values("Prob_C", ascending=False)
+        st.dataframe(style_df(dfc, {"Prob_C":"{:.2%}","Acc":"{:.2%}","EPS_C(%)":"{:.2f}"}), use_container_width=True)
 
     st.markdown("---")
     st.subheader("📋 Sammenligningstabell (alle horisonter)")
-
-    cmp_cols = ["Ticker",
-                f"Prob_{daysA}d", f"Rec_{daysA}d", f"Date_{daysA}d", f"EPS_{daysA}d(%)",
-                f"Prob_{daysB}d", f"Rec_{daysB}d", f"Date_{daysB}d", f"EPS_{daysB}d(%)",
-                f"Prob_{daysC}d", f"Rec_{daysC}d", f"Date_{daysC}d", f"EPS_{daysC}d(%)",
-                "Acc","AUC","Composite"]
-    cmp_df = df[cmp_cols].sort_values("Composite", ascending=False, na_position="last")
-
+    cmp_df = df[[
+        "Ticker",
+        "Prob_A","Rec_A","Date_A","EPS_A(%)",
+        "Prob_B","Rec_B","Date_B","EPS_B(%)",
+        "Prob_C","Rec_C","Date_C","EPS_C(%)",
+        "Acc","AUC","Composite"
+    ]].sort_values("Composite", ascending=False)
     st.dataframe(
-        style_df(
-            cmp_df,
-            {
-                f"Prob_{daysA}d":"{:.2%}",
-                f"Prob_{daysB}d":"{:.2%}",
-                f"Prob_{daysC}d":"{:.2%}",
-                f"EPS_{daysA}d(%)":"{:.2f}",
-                f"EPS_{daysB}d(%)":"{:.2f}",
-                f"EPS_{daysC}d(%)":"{:.2f}",
-                "Acc":"{:.2%}",
-                "AUC":"{:.3f}",
-                "Composite":"{:.2%}",
-            }
-        ),
+        style_df(cmp_df, {
+            "Prob_A":"{:.2%}","Prob_B":"{:.2%}","Prob_C":"{:.2%}",
+            "Acc":"{:.2%}","AUC":"{:.3f}","Composite":"{:.2%}",
+            "EPS_A(%)":"{:.2f}","EPS_B(%)":"{:.2f}","EPS_C(%)":"{:.2f}"
+        }),
         use_container_width=True
     )
 
-    # -------------------------
-    # Detalj: graf per ticker
-    # -------------------------
+    # Detalj-graf
     st.markdown("---")
-    st.subheader("📊 Detaljvisning (pris + sannsynlighet A/B/C)")
+    st.subheader("📊 Detaljvisning (pris + sannsynlighet)")
     sel_list = df["Ticker"].tolist() if not df.empty else []
     sel = st.selectbox("Velg ticker", sel_list)
     if sel:
         try:
             raw = fetch_history(sel, start=start_date, end=end_date)
-            pack = analyze_ticker_multi(raw, eps_by=eps_map, horizons=HORIZONS)
-
-            close = get_close_series(raw)
-            plot_df = pd.DataFrame({"Close": close})
-            for hid, _days in HORIZONS:
-                plot_df[f"Prob_{hid}"] = pack[hid]["proba"].reindex(plot_df.index)
-
-            plot_df = plot_df.dropna(subset=["Close"])
+            pack = analyze_ticker_multi(raw, {"A":dA,"B":dB,"C":dC}, {"A":epsA,"B":epsB,"C":epsC}, feats_map)
+            plot_df = pd.DataFrame({
+                "Close": raw["Close"],
+                f"Prob_{dA}": pack["A"]["proba"].reindex(raw.index),
+                f"Prob_{dB}": pack["B"]["proba"].reindex(raw.index),
+                f"Prob_{dC}": pack["C"]["proba"].reindex(raw.index),
+            }).dropna(subset=["Close"])
 
             fig, ax1 = plt.subplots(figsize=(10, 4))
             ax1.plot(plot_df.index, plot_df["Close"])
-            ax1.set_xlabel("Dato")
-            ax1.set_ylabel("Pris")
+            ax1.set_xlabel("Dato"); ax1.set_ylabel("Pris")
 
             ax2 = ax1.twinx()
-            for hid, _ in HORIZONS:
-                key = f"Prob_{hid}"
-                if key in plot_df:
-                    ax2.plot(plot_df.index, plot_df[key], alpha=0.9, label=key)
+            if f"Prob_{dA}" in plot_df: ax2.plot(plot_df.index, plot_df[f"Prob_{dA}"], alpha=0.9, label=f"{dA} hd")
+            if f"Prob_{dB}" in plot_df: ax2.plot(plot_df.index, plot_df[f"Prob_{dB}"], alpha=0.9, label=f"{dB} hd")
+            if f"Prob_{dC}" in plot_df: ax2.plot(plot_df.index, plot_df[f"Prob_{dC}"], alpha=0.9, label=f"{dC} hd")
             ax2.axhline(0.5, linestyle="--", alpha=0.6)
             ax2.set_ylabel("Sannsynlighet")
             ax2.legend(loc="upper left")
 
-            plt.title(f"{sel}: Pris + sannsynlighet (A/B/C)")
+            plt.title(f"{sel}: Pris + sannsynlighet ({dA}/{dB}/{dC} handelsdager)")
             st.pyplot(fig)
         except Exception as e:
             st.info(f"Kunne ikke vise graf for {sel}: {e}")
 
-    # -------------------------
     # Eksport
-    # -------------------------
     st.markdown("---")
     st.subheader("📤 Eksport")
-
     csv_bytes = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "⬇️ Last ned CSV (alle horisonter)",
-        data=csv_bytes,
-        file_name=f"scan_v6_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv"
-    )
+    st.download_button("⬇️ Last ned CSV (alle horisonter)",
+                       data=csv_bytes,
+                       file_name=f"scan_v6_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                       mime="text/csv")
 
     if want_excel:
         try:
             import io
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                dfA.to_excel(writer, index=False, sheet_name=f"{daysA}d")
-                dfB.to_excel(writer, index=False, sheet_name=f"{daysB}d")
-                dfC.to_excel(writer, index=False, sheet_name=f"{daysC}d")
+                dfa.to_excel(writer, index=False, sheet_name=f"{dA}hd")
+                dfb.to_excel(writer, index=False, sheet_name=f"{dB}hd")
+                dfc.to_excel(writer, index=False, sheet_name=f"{dC}hd")
                 cmp_df.to_excel(writer, index=False, sheet_name="Comparison")
             buf.seek(0)
             xls = buf.getvalue()
             st.download_button(
-                "⬇️ Last ned Excel (A/B/C/Comparison)",
+                f"⬇️ Last ned Excel ({dA}/{dB}/{dC} handelsdager)",
                 data=xls,
                 file_name=f"scan_v6_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -559,7 +499,9 @@ if run:
             st.info(f"Excel-eksport feilet: {e}")
 
 else:
-    st.info("Velg/skriv tickere i sidepanelet, justér horisonter og egne eps-verdier – og trykk **🔎 Skann og sammenlign** for å starte.")
+    st.info("Velg tickere, horisonter, EPS og features – trykk **🔎 Skann og sammenlign**.")
+
+
 
 
 
