@@ -247,33 +247,38 @@ def fit_predict_single_horizon(df_raw: pd.DataFrame, horizon_days: int, eps: flo
     """
     Bygger features, lager label med eps-filter, trener modell,
     returnerer proba-serie (hele tidsrekken), validerings-metrics og siste indeks.
+    Robust mot rare DataFrame-formater og liten datastruktur.
     """
     feats = add_indicators(df_raw)
     y = make_label_eps(feats, horizon_days, eps)
 
-    # tilgjengelige features
+    # Finn tilgjengelige features som faktisk finnes og har minst én ikke-NaN
     avail = [c for c in FEATURES_ALL if c in feats.columns and feats[c].notna().any()]
-    if not avail or y.name not in feats.columns.union([y.name]):
-        # smal fallback
-        X = feats[avail] if avail else pd.DataFrame(index=feats.index)
-    else:
-        X = feats[avail]
 
-    pack = pd.concat([X, y], axis=1).dropna()
+    # Bygg X og pakk sammen med y
+    X = feats[avail].copy() if avail else pd.DataFrame(index=feats.index)
+    pack = pd.concat([X, y], axis=1)
+
+    # Sørg for at vi dropper kun rader der enten feature(r) eller label er NaN
+    drop_cols = (avail + [y.name]) if avail else [y.name]
+    pack = pack.dropna(subset=drop_cols)
+
+    # For lite? -> nøytral fallback
     if pack.empty or len(pack) < 80:
-        # nøytral fallback
-        proba = pd.Series(0.5, index=(pack.index if len(pack) else feats.index), name="proba")
-        return proba, np.nan, np.nan, 0.5, (pack.index[-1] if len(pack) else feats.index[-1] if len(feats) else None)
+        base_index = pack.index if len(pack) else feats.index
+        proba = pd.Series(0.5, index=base_index, name="proba")
+        last_idx = base_index[-1] if len(base_index) else None
+        return proba, np.nan, np.nan, 0.5, last_idx
 
-    Xp = pack[avail]
+    # Minst to klasser nødvendig
     yp = pack[y.name].astype(int)
-
-    # Minst 2 klasser
     if len(np.unique(yp)) < 2:
         proba = pd.Series(0.5, index=pack.index, name="proba")
         return proba, np.nan, np.nan, 0.5, pack.index[-1]
 
-    # Enkel walk-forward-ish: del i 70/30 tidlig/val
+    Xp = pack[avail] if avail else pd.DataFrame(index=pack.index)
+
+    # Enkel tidsbasert 70/30-splitt
     n = len(pack)
     split = int(n * 0.70)
     Xtr, Xva = Xp.iloc[:split], Xp.iloc[split:]
@@ -281,7 +286,7 @@ def fit_predict_single_horizon(df_raw: pd.DataFrame, horizon_days: int, eps: flo
 
     scaler = RobustScaler().fit(Xtr)
     Xtr_s = scaler.transform(Xtr)
-    Xva_s = scaler.transform(Xva)
+    Xva_s = scaler.transform(Xva) if len(Xva) else np.empty((0, Xtr.shape[1]))
     Xall_s = scaler.transform(Xp)
 
     base = GradientBoostingClassifier(random_state=0)
@@ -292,7 +297,7 @@ def fit_predict_single_horizon(df_raw: pd.DataFrame, horizon_days: int, eps: flo
     p_all = clf.predict_proba(Xall_s)[:, 1]
     proba_full = pd.Series(p_all, index=Xp.index, name="proba")
 
-    # Finn opt_thr som max accuracy på val
+    # Optimal terskel fra val (hvis vi har val-data)
     opt_thr = 0.5
     acc = auc = np.nan
     if len(Xva):
@@ -535,6 +540,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
