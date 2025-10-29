@@ -150,45 +150,56 @@ def fetch_history(ticker: str, start, end):
 
 def add_indicators(df_raw: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df_raw.index).copy()
-    close = pd.to_numeric(df_raw.get("Close", pd.Series(index=df_raw.index)), errors="coerce").astype(float)
+
+    # Robust henting av Close som ren 1D Series (float)
+    if "Close" in df_raw.columns:
+        close = pd.to_numeric(df_raw["Close"], errors="coerce").astype(float)
+    else:
+        close = pd.Series(np.nan, index=df_raw.index, dtype=float)
     out["Close"] = close
-    out["ret1"] = close.pct_change(1)
-    out["ret3"] = close.pct_change(3)
-    out["ret5"] = close.pct_change(5)
-    out["ma5"] = close.rolling(5).mean()
-    out["ma20"] = close.rolling(20).mean()
-    out["vol10"] = out["ret1"].rolling(10).std()
+
+    out["ret1"]   = close.pct_change(1)
+    out["ret3"]   = close.pct_change(3)
+    out["ret5"]   = close.pct_change(5)
+    out["ma5"]    = close.rolling(5).mean()
+    out["ma20"]   = close.rolling(20).mean()
+    out["vol10"]  = out["ret1"].rolling(10).std()
     out["trend20"] = (out["ma20"] - out["ma5"]) / out["ma20"]
 
     delta = close.diff()
-    gain = delta.where(delta > 0, 0).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
+    gain  = delta.where(delta > 0, 0).rolling(14).mean()
+    loss  = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs    = gain / loss
     out["rsi14"] = 100 - (100 / (1 + rs))
 
-    out["ema20"] = close.ewm(span=20, adjust=False).mean()
-    out["ema50"] = close.ewm(span=50, adjust=False).mean()
+    out["ema20"]   = close.ewm(span=20, adjust=False).mean()
+    out["ema50"]   = close.ewm(span=50, adjust=False).mean()
     out["ema_gap"] = (out["ema20"] - out["ema50"]) / out["ema50"]
 
     ema12 = close.ewm(span=12, adjust=False).mean()
     ema26 = close.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    sig = macd.ewm(span=9, adjust=False).mean()
-    out["macd"] = macd
+    macd  = ema12 - ema26
+    sig   = macd.ewm(span=9, adjust=False).mean()
+    out["macd"]     = macd
     out["macd_sig"] = sig
-    out["macd_hist"] = macd - sig
+    out["macd_hist"]= macd - sig
 
-    ma20 = close.rolling(20).mean()
+    ma20  = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     upper = ma20 + 2*std20
     lower = ma20 - 2*std20
-    out["bb_pct"] = (close - lower) / (upper - lower)
+    out["bb_pct"]   = (close - lower) / (upper - lower)
     out["bb_width"] = (upper - lower) / ma20
 
     return out
 
 def make_label_eps(df_raw: pd.DataFrame, horizon_days: int, eps_pct: float) -> pd.Series:
-    close = pd.to_numeric(df_raw.get("Close", pd.Series(index=df_raw.index)), errors="coerce").astype(float)
+    # Robust henting av Close som ren 1D Series (float)
+    if "Close" in df_raw.columns:
+        close = pd.to_numeric(df_raw["Close"], errors="coerce").astype(float)
+    else:
+        close = pd.Series(np.nan, index=df_raw.index, dtype=float)
+
     fwd = close.shift(-int(horizon_days)) / close - 1.0
     eps = float(eps_pct) / 100.0
     arr = np.where(fwd > eps, 1, np.where(fwd < -eps, 0, np.nan))
@@ -498,6 +509,7 @@ if run:
             st.info(f"Excel-eksport feilet: {e}")
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign (A/B/C)** for å starte.")
+
 
 
 
