@@ -45,14 +45,48 @@ def fetch_history(ticker: str, start, end):
         return pd.DataFrame()
 
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Lett, robust feature-pipe. Alle numeriske kolonner coerces."""
+    """Robust feature-pipe som alltid forsøker å hente en 1D Close-serie."""
     if df is None or df.empty:
         return pd.DataFrame()
 
     out = df.copy()
-    # Coerce 'Close' -> float
-    close = pd.to_numeric(out.get("Close", pd.Series(index=out.index)), errors="coerce").astype(float)
 
+    # ---- Finn en 1D 'Close'-serie uansett kolonneformat ----
+    close_obj = None
+    if "Close" in out.columns:
+        close_obj = out["Close"]  # kan være Series ELLER DataFrame
+    elif isinstance(out.columns, pd.MultiIndex):
+        # prøv å hente nivå med navn 'Close'
+        try:
+            close_obj = out.xs("Close", axis=1, level=0, drop_level=False)
+        except Exception:
+            pass
+
+    # Hvis fortsatt ikke funnet, prøv å matche på navn som ser ut som 'Close'
+    if close_obj is None:
+        candidates = [c for c in out.columns
+                      if (isinstance(c, tuple) and str(c[0]).lower() == "close")
+                      or (isinstance(c, str) and c.lower() == "close")]
+        if candidates:
+            close_obj = out[candidates[0]]
+
+    # Konverter til 1D Series
+    if isinstance(close_obj, pd.DataFrame):
+        # Ta første kolonne hvis flere
+        if close_obj.shape[1] >= 1:
+            close_series = close_obj.iloc[:, 0]
+        else:
+            return pd.DataFrame()
+    elif isinstance(close_obj, pd.Series):
+        close_series = close_obj
+    else:
+        # Ikke noe brukbart 'Close'-felt
+        return pd.DataFrame()
+
+    # Sikker konvertering til float
+    close = pd.to_numeric(close_series, errors="coerce").astype(float)
+
+    # ---- Lag features ----
     ret1 = close.pct_change()
     out["ret1"] = ret1
     out["ret3"] = close.pct_change(3)
@@ -69,7 +103,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     rs = gain / loss
     out["rsi14"] = 100 - (100 / (1 + rs))
 
-    # EMA, MACD, Bollinger
+    # EMA / MACD
     out["ema20"] = close.ewm(span=20, adjust=False).mean()
     out["ema50"] = close.ewm(span=50, adjust=False).mean()
     out["ema_gap"] = (out["ema20"] - out["ema50"]) / out["ema50"]
@@ -82,17 +116,13 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out["macd_sig"] = signal
     out["macd_hist"] = macd - signal
 
+    # Bollinger
     ma20 = close.rolling(20).mean()
     std20 = close.rolling(20).std()
     upper = ma20 + 2 * std20
     lower = ma20 - 2 * std20
     out["bb_pct"] = (close - lower) / (upper - lower)
     out["bb_width"] = (upper - lower) / ma20
-
-    # Drop alt-null-rammer
-    if set(out.columns) == set(df.columns):
-        # ingen nye features (skjedde noe feil) -> returner tomt
-        return pd.DataFrame(index=df.index)
 
     return out
 
@@ -448,6 +478,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign (A/B/C)** for å starte.")
+
 
 
 
