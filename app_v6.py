@@ -824,7 +824,6 @@ if run:
     if want_excel:
         try:
             import io
-            dA.to_excel := None  # placeholder for linterns
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                 dA.to_excel(writer, index=False, sheet_name=f"A_{HORIZONS['A']}d")
@@ -843,6 +842,7 @@ if run:
 
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign** for å starte.")
+
 
 
 
