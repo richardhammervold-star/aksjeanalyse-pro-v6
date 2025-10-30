@@ -26,16 +26,108 @@ st.title("📈 Aksjeanalyse – Pro v6 Dashboard")
 st.caption("Fleksible horisonter (A/B/C), uavhengige eps-filtre og feature-valg • Build v6.4")
 
 # -----------------------------
-# Presets (noen korte)
+# 📦 Presets (komplett + favoritter)
 # -----------------------------
+if "favorites" not in st.session_state:
+    st.session_state["favorites"] = ["AAPL", "MSFT", "EQNR.OL", "BTC-USD", "USDNOK=X"]
+
 PRESETS = {
-    "OBX (Norge)": [
-        "EQNR.OL","DNB.OL","MOWI.OL","NHY.OL","TEL.OL","ORK.OL","YAR.OL","KOG.OL","AKRBP.OL","TGS.OL"
+    # ======== ⭐ FAVORITTER ========
+    "⭐ Favoritter (mine tickere)": st.session_state["favorites"],
+
+    # ======== 🇳🇴 NORGE ========
+    "🇳🇴 OBX (Norge)": [
+        "EQNR.OL","DNB.OL","MOWI.OL","NHY.OL","TEL.OL","ORK.OL","YAR.OL","KOG.OL","AKRBP.OL",
+        "TGS.OL","SALM.OL","AUTO.OL","ELK.OL","NOD.OL","PGS.OL","ADE.OL","BONHR.OL",
+        "OTELLO.OL","KID.OL","NRC.OL","VAR.OL","KIT.OL","SCHB.OL","AGS.OL","NEL.OL"
     ],
-    "USA – Megacaps": [
-        "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","JPM","XOM","UNH"
+    "📊 Euronext Growth Oslo": [
+        "NEL.OL","SCATC.OL","RECSI.OL","QFUEL.OL","VOW.OL","HYPRO.OL","HYN.OL",
+        "OTELLO.OL","LINK.OL","TECH.OL","SOFTX.OL","KOMP.OL","AUTO.OL","PLAY.OL","CHG.OL",
+        "EIOF.OL","DOF.OL","FROY.OL","BONHR.OL","NAPA.OL"
+    ],
+    "⚙️ Norsk industri / energi": [
+        "EQNR.OL","AKRBP.OL","VAR.OL","NHY.OL","YAR.OL","SCATC.OL","HYPRO.OL","NOD.OL","NEL.OL","KOG.OL","TGS.OL"
+    ],
+    "💻 Norsk teknologi": [
+        "OTELLO.OL","LINK.OL","TECH.OL","SOFTX.OL","PLAY.OL","KID.OL","AUTO.OL","ADE.OL","KOMP.OL"
+    ],
+
+    # ======== 🇺🇸 USA ========
+    "🇺🇸 USA – Megacaps": [
+        "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","BRK-B","JPM","XOM",
+        "UNH","V","JNJ","WMT","PG","MA","AVGO","HD","MRK","PEP"
+    ],
+    "🇺🇸 USA – Teknologi / AI": [
+        "AAPL","MSFT","NVDA","GOOGL","META","AMZN","AMD","CRM","ORCL","INTU",
+        "ADBE","NOW","SNOW","NET","PANW","DDOG","PLTR","SHOP","UBER","SQ"
+    ],
+    "🇺🇸 USA – Fornybar / Clean Energy": [
+        "ENPH","SEDG","RUN","NEE","PLUG","BLDP","TSLA","BE","FSLR","SPWR"
+    ],
+
+    # ======== 🌍 VERDEN ========
+    "🌍 Verden – Topp 50 selskaper": [
+        # USA
+        "AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA","BRK-B","JPM","V","PG","JNJ","MA","UNH","XOM",
+        # Europa
+        "NESN.SW","NOVN.SW","ROG.SW","SAP.DE","SIE.DE","ASML.AS","OR.PA","MC.PA","AIR.PA","ULVR.L",
+        # Asia
+        "TM","SONY","TSM","BABA","TCEHY","005930.KS","9984.T","NTDOY","HMC","SMFG",
+        # Fornybar / Energi
+        "NEE","BP.L","SHEL.L","EQNR.OL","ENI.MI","TOTF.PA",
+        # Krypto-relatert / Tech
+        "COIN","MSTR","SQ","PYPL","SHOP"
+    ],
+
+    # ======== 💱 VALUTA ========
+    "💱 Valuta (Forex – hovedpar)": [
+        "EURUSD=X","USDJPY=X","GBPUSD=X","AUDUSD=X","USDCAD=X","USDCHF=X","NZDUSD=X"
+    ],
+    "💱 Valuta (Nordic & Exotic)": [
+        "EURNOK=X","USDNOK=X","SEKNOK=X","EURSEK=X","USDSEK=X",
+        "EURDKK=X","USDTRY=X","USDZAR=X","USDCNH=X","USDPLN=X","USDMXN=X","USDINR=X"
+    ],
+
+    # ======== ⚙️ RÅVARER ========
+    "⚙️ Råvarer – Energi": [
+        "CL=F","BZ=F","NG=F","RB=F","HO=F","QM=F","QG=F"
+    ],
+    "🪨 Råvarer – Metaller": [
+        "GC=F","SI=F","HG=F","PL=F","PA=F","ALI=F","ZNC=F","NID=F","AL=F","NI=F"
+    ],
+    "🌾 Råvarer – Landbruk": [
+        "ZC=F","ZW=F","ZS=F","KC=F","CC=F","CT=F","SB=F","LBS=F","OJ=F","FC=F","LC=F","LH=F"
+    ],
+
+    # ======== 🪙 Krypto ========
+    "🪙 Krypto": [
+        "BTC-USD","ETH-USD","SOL-USD","XRP-USD","ADA-USD","BNB-USD","DOGE-USD",
+        "AVAX-USD","DOT-USD","LTC-USD","LINK-USD","ATOM-USD","TON-USD","NEAR-USD","HBAR-USD"
     ],
 }
+
+# -----------------------------
+# ⚙️ Sidebar – Favorittfunksjon
+# -----------------------------
+st.sidebar.markdown("---")
+st.sidebar.subheader("⭐ Favoritter")
+
+fav_input = st.sidebar.text_area(
+    "Mine favoritt-tickere (komma- eller linje-separert)",
+    value=", ".join(st.session_state["favorites"]),
+    height=80
+)
+
+if st.sidebar.button("💾 Lagre som favoritter"):
+    st.session_state["favorites"] = [
+        t.strip().upper()
+        for chunk in fav_input.split("\n")
+        for t in chunk.split(",")
+        if t.strip()
+    ]
+    st.sidebar.success("Favoritter oppdatert! Du finner dem i preset-listen øverst.")
+
 
 # -----------------------------
 # Hjelpere – robust pris, indikatorer, labels
@@ -563,6 +655,7 @@ if run:
             st.info(f"Excel-eksport feilet: {e}")
 else:
     st.info("Velg/skriv tickere i sidepanelet og trykk **🔎 Skann og sammenlign (A/B/C)** for å starte.")
+
 
 
 
